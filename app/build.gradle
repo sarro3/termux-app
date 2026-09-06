@@ -95,9 +95,9 @@ android {
 
     buildTypes {
         release {
-            minifyEnabled true
-            shrinkResources false // Reproducible builds
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Keep minify off: Termux uses reflection (BuildConfig, plugin APIs) that R8 strips.
+            minifyEnabled false
+            shrinkResources false
             signingConfig signingConfigs.release
         }
 
