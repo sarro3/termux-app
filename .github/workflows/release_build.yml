@@ -32,31 +32,43 @@ jobs:
           exit_on_error() { echo "$1"; exit 1; }
 
           echo "Setting vars"
-          RELEASE_VERSION_NAME="v0.118.0+${GITHUB_SHA:0:7}"
-          echo "Using $RELEASE_VERSION_NAME"
+
+          if [ "$GITHUB_EVENT_NAME" == "pull_request" ]; then
+              GITHUB_SHA="${{ github.event.pull_request.head.sha }}"
+          fi
+
+          CURRENT_VERSION_NAME_REGEX='\s+versionName "([^"]+)"$'
+          CURRENT_VERSION_NAME="$(grep -m 1 -E "$CURRENT_VERSION_NAME_REGEX" ./app/build.gradle | sed -r "s/$CURRENT_VERSION_NAME_REGEX/\1/")"
+          RELEASE_VERSION_NAME="v$CURRENT_VERSION_NAME+${GITHUB_SHA:0:7}"
+          echo "Using $RELEASE_VERSION_NAME (sha=$GITHUB_SHA)"
+          if ! printf "%s" "${RELEASE_VERSION_NAME/v/}" | grep -qP '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$'; then
+           exit_on_error "The versionName '${RELEASE_VERSION_NAME/v/}' is not a valid version as per semantic version '2.0.0' spec."
+          fi
 
           APK_DIR_PATH="./app/build/outputs/apk/release"
-          APK_VERSION_TAG="$RELEASE_VERSION_NAME-${{ env.PACKAGE_VARIANT }}-github-release" # Note the "-", GITHUB_SHA will already have "+" before it
+          APK_VERSION_TAG="$RELEASE_VERSION_NAME-${{ env.PACKAGE_VARIANT }}-github-release"
           APK_BASENAME_PREFIX="termux-app_$APK_VERSION_TAG"
 
-          # Used by attachment steps later
           echo "APK_DIR_PATH=$APK_DIR_PATH" >> $GITHUB_ENV
           echo "APK_VERSION_TAG=$APK_VERSION_TAG" >> $GITHUB_ENV
           echo "APK_BASENAME_PREFIX=$APK_BASENAME_PREFIX" >> $GITHUB_ENV
 
-          echo "Building release APKs"
-          export TERMUX_APP_VERSION_NAME="${RELEASE_VERSION_NAME/v/}" # Used by app/build.gradle
-          export TERMUX_APK_VERSION_TAG="$APK_VERSION_TAG" # Used by app/build.gradle
-          export TERMUX_PACKAGE_VARIANT="${{ env.PACKAGE_VARIANT }}" # Used by app/build.gradle
+          echo "Building release APKs for $APK_VERSION_TAG"
+          export TERMUX_APP_VERSION_NAME="${RELEASE_VERSION_NAME/v/}"
+          export TERMUX_APK_VERSION_TAG="$APK_VERSION_TAG"
+          export TERMUX_PACKAGE_VARIANT="${{ env.PACKAGE_VARIANT }}"
           export TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS=1
-          if ! ./gradlew assembleRelease; then
-            exit_on_error "Release build failed for '$APK_VERSION_TAG' build."
+          chmod +x ./gradlew
+          ./gradlew assembleRelease --stacktrace
+          gradle_rc=$?
+          if [ "$gradle_rc" -ne 0 ]; then
+            exit_on_error "Release build failed for '$APK_VERSION_TAG' (gradle exit $gradle_rc)."
           fi
 
           echo "Validating APKs"
           for abi in universal arm64-v8a armeabi-v7a x86_64 x86; do
             if ! test -f "$APK_DIR_PATH/${APK_BASENAME_PREFIX}_$abi.apk"; then
-              files_found="$(ls "$APK_DIR_PATH")"
+              files_found="$(ls "$APK_DIR_PATH" 2>/dev/null || true)"
               exit_on_error "Failed to find built APK at '$APK_DIR_PATH/${APK_BASENAME_PREFIX}_$abi.apk'. Files found: "$'\n'"$files_found"
             fi
           done
