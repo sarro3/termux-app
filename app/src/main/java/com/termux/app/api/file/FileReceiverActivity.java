@@ -19,6 +19,7 @@ import com.termux.shared.interact.MessageDialogUtils;
 import com.termux.shared.net.uri.UriScheme;
 import com.termux.shared.termux.interact.TextInputDialogUtils;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.TermuxPathCompat;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_SERVICE;
 import com.termux.app.TermuxService;
@@ -235,7 +236,7 @@ public class FileReceiverActivity extends AppCompatActivity {
     }
 
     void handleUrlAndFinish(final String url) {
-        final File urlOpenerProgramFile = new File(URL_OPENER_PROGRAM);
+        final File urlOpenerProgramFile = new File(getUrlOpenerProgram());
         if (!urlOpenerProgramFile.isFile()) {
             showErrorDialogAndQuit("The following file does not exist:\n$HOME/bin/termux-url-opener\n\n"
                 + "Create this file as a script or a symlink - it will be called with the shared URL as the first argument.");
@@ -246,7 +247,7 @@ public class FileReceiverActivity extends AppCompatActivity {
         //noinspection ResultOfMethodCallIgnored
         urlOpenerProgramFile.setExecutable(true);
 
-        final Uri urlOpenerProgramUri = UriUtils.getFileUri(URL_OPENER_PROGRAM);
+        final Uri urlOpenerProgramUri = UriUtils.getFileUri(getUrlOpenerProgram());
 
         Intent executeIntent = new Intent(TERMUX_SERVICE.ACTION_SERVICE_EXECUTE, urlOpenerProgramUri);
         executeIntent.setClass(FileReceiverActivity.this, TermuxService.class);
