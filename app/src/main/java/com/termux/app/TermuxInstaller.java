@@ -210,6 +210,8 @@ final class TermuxInstaller {
                         Os.symlink(symlink.first, symlink.second);
                     }
 
+                    rewriteShebangsUnder(stagingPrefixDir);
+
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
 
                     if (!stagingPrefixDir.renameTo(prefixDir)) {
@@ -369,6 +371,81 @@ final class TermuxInstaller {
                 }
             }
         }.start();
+    }
+
+    /**
+     * Kernel shebang lookup ignores LD_PRELOAD, so rewrite
+     * {@code #!/data/data/com.termux/...} to the physical prefix.
+     */
+    private static void rewriteShebangsUnder(File dir) {
+        if (dir == null || !dir.isDirectory())
+            return;
+        File[] children = dir.listFiles();
+        if (children == null)
+            return;
+        byte[] bootstrapPrefix = TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        byte[] physicalPrefix = TermuxPathCompat.getPhysicalAppDataDir().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (java.util.Arrays.equals(bootstrapPrefix, physicalPrefix))
+            return;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                rewriteShebangsUnder(child);
+                continue;
+            }
+            if (!child.isFile() || child.length() < 24 || child.length() > 512 * 1024)
+                continue;
+            try {
+                byte[] data = readAllBytesCompat(child);
+                if (data.length < 4 || data[0] != '#' || data[1] != '!')
+                    continue;
+                int nl = -1;
+                int max = Math.min(data.length, 512);
+                for (int i = 2; i < max; i++) {
+                    if (data[i] == '\n') {
+                        nl = i;
+                        break;
+                    }
+                }
+                if (nl < 0)
+                    continue;
+                String line = new String(data, 0, nl, java.nio.charset.StandardCharsets.UTF_8);
+                if (!line.contains(TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH))
+                    continue;
+                String rewritten = line.replace(TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH,
+                    TermuxPathCompat.getPhysicalAppDataDir());
+                byte[] newLine = rewritten.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                byte[] out = new byte[newLine.length + (data.length - nl)];
+                System.arraycopy(newLine, 0, out, 0, newLine.length);
+                System.arraycopy(data, nl, out, newLine.length, data.length - nl);
+                try (FileOutputStream fos = new FileOutputStream(child, false)) {
+                    fos.write(out);
+                }
+            } catch (Exception ignored) {
+                // Best-effort; setupShellCommandArguments also remaps shebangs at exec time.
+            }
+        }
+    }
+
+    private static byte[] readAllBytesCompat(File file) throws java.io.IOException {
+        long len = file.length();
+        if (len > Integer.MAX_VALUE)
+            throw new java.io.IOException("file too large");
+        byte[] data = new byte[(int) len];
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+            int off = 0;
+            while (off < data.length) {
+                int n = in.read(data, off, data.length - off);
+                if (n < 0)
+                    break;
+                off += n;
+            }
+            if (off != data.length) {
+                byte[] trimmed = new byte[off];
+                System.arraycopy(data, 0, trimmed, 0, off);
+                return trimmed;
+            }
+            return data;
+        }
     }
 
     private static Error ensureDirectoryExists(File directory) {

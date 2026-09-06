@@ -85,6 +85,7 @@ public class TermuxSession {
             executionCommand.workingDirectory = shellEnvironmentClient.getDefaultWorkingDirectoryPath();
         if (executionCommand.workingDirectory.isEmpty())
             executionCommand.workingDirectory = "/";
+        executionCommand.workingDirectory = com.termux.shared.termux.TermuxPathCompat.toPhysical(executionCommand.workingDirectory);
 
         String defaultBinPath = shellEnvironmentClient.getDefaultBinPath();
         if (defaultBinPath.isEmpty())

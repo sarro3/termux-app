@@ -59,6 +59,11 @@ public class TermuxShellUtils {
                                         String[] parts = shebangExecutable.split("/");
                                         String binary = parts[parts.length - 1];
                                         interpreter = TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH) + "/" + binary;
+                                    } else {
+                                        // Kernel shebang lookup cannot follow LD_PRELOAD remapping.
+                                        String remapped = TermuxPathCompat.toPhysical(shebangExecutable);
+                                        if (!remapped.equals(shebangExecutable))
+                                            interpreter = remapped;
                                     }
                                     break;
                                 }

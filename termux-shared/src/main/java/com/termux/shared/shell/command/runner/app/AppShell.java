@@ -91,6 +91,7 @@ public final class AppShell {
             executionCommand.workingDirectory = shellEnvironmentClient.getDefaultWorkingDirectoryPath();
         if (executionCommand.workingDirectory.isEmpty())
             executionCommand.workingDirectory = "/";
+        executionCommand.workingDirectory = com.termux.shared.termux.TermuxPathCompat.toPhysical(executionCommand.workingDirectory);
 
         // Transform executable path to shell/session name, e.g. "/bin/do-something.sh" => "do-something.sh".
         String executableBasename = ShellUtils.getExecutableBasename(executionCommand.executable);

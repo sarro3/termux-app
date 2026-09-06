@@ -42,6 +42,18 @@ public final class TermuxPathCompat {
                 ? filesDir.getParent()
                 : TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
         }
+        // Work profile / secondary users: native chdir/exec cannot use /data/data/<pkg>
+        // (that path belongs to user 0). Force /data/user/<id>/<pkg>.
+        int userId = android.os.Process.myUid() / 100000;
+        if (userId != 0) {
+            String pkg = context.getPackageName();
+            sPhysicalAppDataDir = "/data/user/" + userId + "/" + pkg;
+            sPhysicalFilesDir = sPhysicalAppDataDir + "/files";
+        } else {
+            sPhysicalAppDataDir = sPhysicalAppDataDir.replaceFirst("^/data/user/0/", "/data/data/");
+            if (sPhysicalFilesDir.startsWith("/data/user/0/"))
+                sPhysicalFilesDir = "/data/data/" + sPhysicalFilesDir.substring("/data/user/0/".length());
+        }
         String normalizedPhysical = sPhysicalAppDataDir.replaceFirst("^/data/user/0/", "/data/data/");
         // Remap whenever this is not the official bootstrap prefix (forked applicationId and/or work profile).
         sNeedsRemap = !normalizedPhysical.equals(TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH);
