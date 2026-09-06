@@ -11,8 +11,8 @@ import java.io.File;
 
 /**
  * Maps the hardcoded Termux prefix {@code /data/data/com.termux} used by bootstrap binaries
- * onto the real app-data directory for the current Android user/profile
- * ({@code /data/user/<id>/com.termux} on work profiles and secondary users).
+ * onto this app's real data directory ({@code /data/data/com.termux.work} or
+ * {@code /data/user/<id>/com.termux.work} on work profiles).
  */
 public final class TermuxPathCompat {
 
@@ -34,25 +34,25 @@ public final class TermuxPathCompat {
     public synchronized static void init(@NonNull Context context) {
         File filesDir = context.getFilesDir();
         String filesPath = filesDir != null ? filesDir.getAbsolutePath() : TermuxConstants.TERMUX_FILES_DIR_PATH;
-        // Primary user: /data/user/0/... is equivalent to /data/data/...
-        String normalized = filesPath.replaceFirst("^/data/user/0/", "/data/data/");
         sPhysicalFilesDir = filesPath;
-        if (normalized.endsWith("/files")) {
+        if (filesPath.endsWith("/files")) {
             sPhysicalAppDataDir = filesPath.substring(0, filesPath.length() - "/files".length());
         } else {
             sPhysicalAppDataDir = filesDir != null && filesDir.getParent() != null
                 ? filesDir.getParent()
                 : TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
         }
-        sNeedsRemap = !normalized.equals(TermuxConstants.TERMUX_FILES_DIR_PATH);
+        String normalizedPhysical = sPhysicalAppDataDir.replaceFirst("^/data/user/0/", "/data/data/");
+        // Remap whenever this is not the official bootstrap prefix (forked applicationId and/or work profile).
+        sNeedsRemap = !normalizedPhysical.equals(TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH);
 
         File nativeLib = new File(context.getApplicationInfo().nativeLibraryDir, REMAP_LIBRARY_NAME);
         sRemapLibraryPath = nativeLib.isFile() ? nativeLib.getAbsolutePath() : null;
 
         sInitialized = true;
         if (sNeedsRemap) {
-            Logger.logInfo(LOG_TAG, "Work profile / secondary user prefix remap enabled: "
-                + TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH + " -> " + sPhysicalAppDataDir
+            Logger.logInfo(LOG_TAG, "Prefix remap enabled: "
+                + TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH + " -> " + sPhysicalAppDataDir
                 + (sRemapLibraryPath != null ? " (preload " + sRemapLibraryPath + ")" : " (preload library missing)"));
         }
     }
@@ -75,19 +75,19 @@ public final class TermuxPathCompat {
         return sPhysicalFilesDir;
     }
 
-    /**
-     * Convert a logical Termux path ({@code /data/data/com.termux/...}) to the physical
-     * path for the current user. Paths that are not under the logical prefix are returned as-is.
-     */
     @NonNull
     public static String toPhysical(@Nullable String logicalPath) {
         if (logicalPath == null)
             return "";
         if (!sNeedsRemap)
             return logicalPath;
-        String logical = TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
-        if (logicalPath.equals(logical) || logicalPath.startsWith(logical + "/")) {
-            return sPhysicalAppDataDir + logicalPath.substring(logical.length());
+        String internal = TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
+        if (logicalPath.equals(internal) || logicalPath.startsWith(internal + "/")) {
+            return sPhysicalAppDataDir + logicalPath.substring(internal.length());
+        }
+        String bootstrap = TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH;
+        if (logicalPath.equals(bootstrap) || logicalPath.startsWith(bootstrap + "/")) {
+            return sPhysicalAppDataDir + logicalPath.substring(bootstrap.length());
         }
         return logicalPath;
     }
@@ -106,7 +106,7 @@ public final class TermuxPathCompat {
     public static void putRemapEnvironment(@NonNull java.util.Map<String, String> environment) {
         if (!sNeedsRemap || sRemapLibraryPath == null)
             return;
-        environment.put(ENV_REMAP_FROM, TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH);
+        environment.put(ENV_REMAP_FROM, TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH);
         environment.put(ENV_REMAP_TO, sPhysicalAppDataDir);
         String existing = environment.get(ENV_LD_PRELOAD);
         if (existing == null || existing.isEmpty())
