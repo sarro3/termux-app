@@ -17,6 +17,7 @@ import com.termux.shared.termux.shell.command.environment.TermuxShellEnvironment
 import com.termux.shared.shell.command.runner.app.AppShell;
 import com.termux.shared.android.AndroidUtils;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.TermuxPathCompat;
 import com.termux.shared.termux.TermuxUtils;
 
 import java.io.File;
@@ -258,14 +259,19 @@ public class TermuxFileUtils {
         if (createDirectoryIfMissing)
             context.getFilesDir();
 
-        if (!FileUtils.directoryFileExists(TermuxConstants.TERMUX_FILES_DIR_PATH, true))
-            return FileUtilsErrno.ERRNO_FILE_NOT_FOUND_AT_PATH.getError("termux files directory", TermuxConstants.TERMUX_FILES_DIR_PATH);
+        if (!TermuxPathCompat.isInitialized())
+            TermuxPathCompat.init(context);
+
+        String filesDirPath = TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_FILES_DIR_PATH);
+
+        if (!FileUtils.directoryFileExists(filesDirPath, true))
+            return FileUtilsErrno.ERRNO_FILE_NOT_FOUND_AT_PATH.getError("termux files directory", filesDirPath);
 
         if (setMissingPermissions)
-            FileUtils.setMissingFilePermissions("termux files directory", TermuxConstants.TERMUX_FILES_DIR_PATH,
+            FileUtils.setMissingFilePermissions("termux files directory", filesDirPath,
                 FileUtils.APP_WORKING_DIRECTORY_PERMISSIONS);
 
-        return FileUtils.checkMissingFilePermissions("termux files directory", TermuxConstants.TERMUX_FILES_DIR_PATH,
+        return FileUtils.checkMissingFilePermissions("termux files directory", filesDirPath,
             FileUtils.APP_WORKING_DIRECTORY_PERMISSIONS, false);
     }
 
@@ -285,7 +291,7 @@ public class TermuxFileUtils {
      * or validating permissions failed, otherwise {@code null}.
      */
     public static Error isTermuxPrefixDirectoryAccessible(boolean createDirectoryIfMissing, boolean setMissingPermissions) {
-           return FileUtils.validateDirectoryFileExistenceAndPermissions("termux prefix directory", TermuxConstants.TERMUX_PREFIX_DIR_PATH,
+           return FileUtils.validateDirectoryFileExistenceAndPermissions("termux prefix directory", TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_PREFIX_DIR_PATH),
                 null, createDirectoryIfMissing,
                 FileUtils.APP_WORKING_DIRECTORY_PERMISSIONS, setMissingPermissions, true,
                 false, false);
@@ -303,7 +309,7 @@ public class TermuxFileUtils {
      * or validating permissions failed, otherwise {@code null}.
      */
     public static Error isTermuxPrefixStagingDirectoryAccessible(boolean createDirectoryIfMissing, boolean setMissingPermissions) {
-        return FileUtils.validateDirectoryFileExistenceAndPermissions("termux prefix staging directory", TermuxConstants.TERMUX_STAGING_PREFIX_DIR_PATH,
+        return FileUtils.validateDirectoryFileExistenceAndPermissions("termux prefix staging directory", TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_STAGING_PREFIX_DIR_PATH),
             null, createDirectoryIfMissing,
             FileUtils.APP_WORKING_DIRECTORY_PERMISSIONS, setMissingPermissions, true,
             false, false);
@@ -321,7 +327,7 @@ public class TermuxFileUtils {
      * or validating permissions failed, otherwise {@code null}.
      */
     public static Error isAppsTermuxAppDirectoryAccessible(boolean createDirectoryIfMissing, boolean setMissingPermissions) {
-        return FileUtils.validateDirectoryFileExistenceAndPermissions("apps/termux-app directory", TermuxConstants.TERMUX_APP.APPS_DIR_PATH,
+        return FileUtils.validateDirectoryFileExistenceAndPermissions("apps/termux-app directory", TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_APP.APPS_DIR_PATH),
             null, createDirectoryIfMissing,
             FileUtils.APP_WORKING_DIRECTORY_PERMISSIONS, setMissingPermissions, true,
             false, false);

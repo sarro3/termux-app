@@ -33,6 +33,8 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import com.termux.shared.termux.TermuxPathCompat;
+
 import static com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR;
 import static com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH;
 import static com.termux.shared.termux.TermuxConstants.TERMUX_STAGING_PREFIX_DIR;
@@ -71,19 +73,17 @@ final class TermuxInstaller {
         filesDirectoryAccessibleError = TermuxFileUtils.isTermuxFilesDirectoryAccessible(activity, true, true);
         boolean isFilesDirectoryAccessible = filesDirectoryAccessibleError == null;
 
-        // Termux can only be run as the primary user (device owner) since only that
-        // account has the expected file system paths. Verify that:
+        // Work profile / secondary users store app data under /data/user/<id>/ instead of
+        // /data/data/. TermuxPathCompat remaps the hardcoded $PREFIX used by bootstrap binaries.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !PackageUtils.isCurrentUserThePrimaryUser(activity)) {
-            bootstrapErrorMessage = activity.getString(R.string.bootstrap_error_not_primary_user_message,
-                MarkdownUtils.getMarkdownCodeForString(TERMUX_PREFIX_DIR_PATH, false));
-            Logger.logError(LOG_TAG, "isFilesDirectoryAccessible: " + isFilesDirectoryAccessible);
-            Logger.logError(LOG_TAG, bootstrapErrorMessage);
-            sendBootstrapCrashReportNotification(activity, bootstrapErrorMessage);
-            MessageDialogUtils.exitAppWithErrorMessage(activity,
-                activity.getString(R.string.bootstrap_error_title),
-                bootstrapErrorMessage);
-            return;
+            Logger.logInfo(LOG_TAG, "Running as a secondary user or work profile; enabling prefix remapping to "
+                + TermuxPathCompat.getPhysicalAppDataDir());
         }
+
+        final String prefixDirPath = TermuxPathCompat.toPhysical(TERMUX_PREFIX_DIR_PATH);
+        final String stagingPrefixDirPath = TermuxPathCompat.toPhysical(TERMUX_STAGING_PREFIX_DIR_PATH);
+        final File prefixDir = TermuxPathCompat.toPhysicalFile(TERMUX_PREFIX_DIR);
+        final File stagingPrefixDir = TermuxPathCompat.toPhysicalFile(TERMUX_STAGING_PREFIX_DIR);
 
         if (!isFilesDirectoryAccessible) {
             bootstrapErrorMessage = Error.getMinimalErrorString(filesDirectoryAccessibleError);
@@ -103,15 +103,15 @@ final class TermuxInstaller {
         }
 
         // If prefix directory exists, even if its a symlink to a valid directory and symlink is not broken/dangling
-        if (FileUtils.directoryFileExists(TERMUX_PREFIX_DIR_PATH, true)) {
+        if (FileUtils.directoryFileExists(prefixDirPath, true)) {
             if (TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
-                Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" exists but is empty or only contains specific unimportant files.");
+                Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + prefixDirPath + "\" exists but is empty or only contains specific unimportant files.");
             } else {
                 whenDone.run();
                 return;
             }
-        } else if (FileUtils.fileExists(TERMUX_PREFIX_DIR_PATH, false)) {
-            Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" does not exist but another file exists at its destination.");
+        } else if (FileUtils.fileExists(prefixDirPath, false)) {
+            Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + prefixDirPath + "\" does not exist but another file exists at its destination.");
         }
 
         final ProgressDialog progress = ProgressDialog.show(activity, null, activity.getString(R.string.bootstrap_installer_body), true, false);
@@ -124,14 +124,14 @@ final class TermuxInstaller {
                     Error error;
 
                     // Delete prefix staging directory or any file at its destination
-                    error = FileUtils.deleteFile("termux prefix staging directory", TERMUX_STAGING_PREFIX_DIR_PATH, true);
+                    error = FileUtils.deleteFile("termux prefix staging directory", stagingPrefixDirPath, true);
                     if (error != null) {
                         showBootstrapErrorDialog(activity, whenDone, Error.getErrorMarkdownString(error));
                         return;
                     }
 
                     // Delete prefix directory or any file at its destination
-                    error = FileUtils.deleteFile("termux prefix directory", TERMUX_PREFIX_DIR_PATH, true);
+                    error = FileUtils.deleteFile("termux prefix directory", prefixDirPath, true);
                     if (error != null) {
                         showBootstrapErrorDialog(activity, whenDone, Error.getErrorMarkdownString(error));
                         return;
@@ -151,7 +151,7 @@ final class TermuxInstaller {
                         return;
                     }
 
-                    Logger.logInfo(LOG_TAG, "Extracting bootstrap zip to prefix staging directory \"" + TERMUX_STAGING_PREFIX_DIR_PATH + "\".");
+                    Logger.logInfo(LOG_TAG, "Extracting bootstrap zip to prefix staging directory \"" + stagingPrefixDirPath + "\".");
 
                     final byte[] buffer = new byte[8096];
                     final List<Pair<String, String>> symlinks = new ArrayList<>(50);
@@ -168,7 +168,7 @@ final class TermuxInstaller {
                                     if (parts.length != 2)
                                         throw new RuntimeException("Malformed symlink line: " + line);
                                     String oldPath = parts[0];
-                                    String newPath = TERMUX_STAGING_PREFIX_DIR_PATH + "/" + parts[1];
+                                    String newPath = stagingPrefixDirPath + "/" + parts[1];
                                     symlinks.add(Pair.create(oldPath, newPath));
 
                                     error = ensureDirectoryExists(new File(newPath).getParentFile());
@@ -179,7 +179,7 @@ final class TermuxInstaller {
                                 }
                             } else {
                                 String zipEntryName = zipEntry.getName();
-                                File targetFile = new File(TERMUX_STAGING_PREFIX_DIR_PATH, zipEntryName);
+                                File targetFile = new File(stagingPrefixDirPath, zipEntryName);
                                 boolean isDirectory = zipEntry.isDirectory();
 
                                 error = ensureDirectoryExists(isDirectory ? targetFile : targetFile.getParentFile());
@@ -212,7 +212,7 @@ final class TermuxInstaller {
 
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
 
-                    if (!TERMUX_STAGING_PREFIX_DIR.renameTo(TERMUX_PREFIX_DIR)) {
+                    if (!stagingPrefixDir.renameTo(prefixDir)) {
                         throw new RuntimeException("Moving termux prefix staging to prefix directory failed");
                     }
 
@@ -254,7 +254,7 @@ final class TermuxInstaller {
                     })
                     .setPositiveButton(R.string.bootstrap_error_try_again, (dialog, which) -> {
                         dialog.dismiss();
-                        FileUtils.deleteFile("termux prefix directory", TERMUX_PREFIX_DIR_PATH, true);
+                        FileUtils.deleteFile("termux prefix directory", TermuxPathCompat.toPhysical(TERMUX_PREFIX_DIR_PATH), true);
                         TermuxInstaller.setupBootstrapIfNeeded(activity, whenDone);
                     }).show();
             } catch (WindowManager.BadTokenException e1) {
@@ -284,7 +284,7 @@ final class TermuxInstaller {
             public void run() {
                 try {
                     Error error;
-                    File storageDir = TermuxConstants.TERMUX_STORAGE_HOME_DIR;
+                    File storageDir = TermuxPathCompat.toPhysicalFile(TermuxConstants.TERMUX_STORAGE_HOME_DIR);
 
                     error = FileUtils.clearDirectory("~/storage", storageDir.getAbsolutePath());
                     if (error != null) {

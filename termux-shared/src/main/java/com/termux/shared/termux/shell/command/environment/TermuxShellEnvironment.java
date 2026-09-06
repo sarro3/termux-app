@@ -13,6 +13,7 @@ import com.termux.shared.shell.command.environment.ShellEnvironmentUtils;
 import com.termux.shared.shell.command.environment.ShellCommandShellEnvironment;
 import com.termux.shared.termux.TermuxBootstrap;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.TermuxPathCompat;
 import com.termux.shared.termux.shell.TermuxShellUtils;
 
 import java.nio.charset.Charset;
@@ -46,14 +47,14 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
 
         // Write environment string to temp file and then move to final location since otherwise
         // writing may happen while file is being sourced/read
-        Error error = FileUtils.writeTextToFile("termux.env.tmp", TermuxConstants.TERMUX_ENV_TEMP_FILE_PATH,
+        Error error = FileUtils.writeTextToFile("termux.env.tmp", TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_ENV_TEMP_FILE_PATH),
             Charset.defaultCharset(), environmentString, false);
         if (error != null) {
             Logger.logErrorExtended(LOG_TAG, error.toString());
             return;
         }
 
-        error = FileUtils.moveRegularFile("termux.env.tmp", TermuxConstants.TERMUX_ENV_TEMP_FILE_PATH, TermuxConstants.TERMUX_ENV_FILE_PATH, true);
+        error = FileUtils.moveRegularFile("termux.env.tmp", TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_ENV_TEMP_FILE_PATH), TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_ENV_FILE_PATH), true);
         if (error != null) {
             Logger.logErrorExtended(LOG_TAG, error.toString());
         }
@@ -75,19 +76,21 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
         if (termuxApiAppEnvironment != null)
             environment.putAll(termuxApiAppEnvironment);
 
-        environment.put(ENV_HOME, TermuxConstants.TERMUX_HOME_DIR_PATH);
-        environment.put(ENV_PREFIX, TermuxConstants.TERMUX_PREFIX_DIR_PATH);
+        environment.put(ENV_HOME, TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH));
+        environment.put(ENV_PREFIX, TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_PREFIX_DIR_PATH));
+        TermuxPathCompat.putRemapEnvironment(environment);
 
         // If failsafe is not enabled, then we keep default PATH and TMPDIR so that system binaries can be used
         if (!isFailSafe) {
-            environment.put(ENV_TMPDIR, TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH);
+            environment.put(ENV_TMPDIR, TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH));
             if (TermuxBootstrap.isAppPackageVariantAPTAndroid5()) {
                 // Termux in android 5/6 era shipped busybox binaries in applets directory
-                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + ":" + TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/applets");
-                environment.put(ENV_LD_LIBRARY_PATH, TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH);
+                String bin = TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
+                environment.put(ENV_PATH, bin + ":" + bin + "/applets");
+                environment.put(ENV_LD_LIBRARY_PATH, TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_LIB_PREFIX_DIR_PATH));
             } else {
                 // Termux binaries on Android 7+ rely on DT_RUNPATH, so LD_LIBRARY_PATH should be unset by default
-                environment.put(ENV_PATH, TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
+                environment.put(ENV_PATH, TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH));
                 environment.remove(ENV_LD_LIBRARY_PATH);
             }
         }
@@ -99,13 +102,13 @@ public class TermuxShellEnvironment extends AndroidShellEnvironment {
     @NonNull
     @Override
     public String getDefaultWorkingDirectoryPath() {
-        return TermuxConstants.TERMUX_HOME_DIR_PATH;
+        return TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH);
     }
 
     @NonNull
     @Override
     public String getDefaultBinPath() {
-        return TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH;
+        return TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH);
     }
 
     @NonNull

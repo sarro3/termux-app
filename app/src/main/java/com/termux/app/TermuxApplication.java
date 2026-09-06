@@ -34,6 +34,9 @@ public class TermuxApplication extends Application {
 
         Logger.logDebug("Starting Application");
 
+        // Resolve physical files dir for work profile / secondary user before any prefix checks.
+        com.termux.shared.termux.TermuxPathCompat.init(this);
+
         // Set TermuxBootstrap.TERMUX_APP_PACKAGE_MANAGER and TermuxBootstrap.TERMUX_APP_PACKAGE_VARIANT
         TermuxBootstrap.setTermuxPackageManagerAndVariant(BuildConfig.TERMUX_PACKAGE_VARIANT);
 
