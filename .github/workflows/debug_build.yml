@@ -136,6 +136,10 @@ jobs:
 
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     strategy:
       fail-fast: false
       matrix:
@@ -224,6 +228,23 @@ jobs:
             gradle-exit.txt
             apk-list.txt
           if-no-files-found: warn
+
+      - name: Comment Gradle log on PR
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "### assembleRelease log (tail)"
+            echo '```'
+            tail -120 gradle-release.log 2>/dev/null || echo "(no gradle-release.log)"
+            echo '```'
+            echo '```'
+            cat gradle-exit.txt apk-list.txt 2>/dev/null || true
+            echo '```'
+          } > /tmp/rel-comment.md
+          gh pr comment 1 --body-file /tmp/rel-comment.md || true
 
       - name: Attach universal APK file
         uses: actions/upload-artifact@v6
