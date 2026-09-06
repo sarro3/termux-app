@@ -251,3 +251,12 @@ afterEvaluate {
         variant.javaCompileProvider.get().dependsOn(downloadBootstraps)
     }
 }
+
+// Release NDK (NDK_DEBUG=0) compiles termux-bootstrap-zip.S before javaCompile,
+// so the .incbin bootstrap-*.zip files must exist first.
+tasks.configureEach { task ->
+    def n = task.name.toLowerCase()
+    if (n.contains("externalnativebuild") || n.contains("ndkbuild") || n.contains("compile") && n.contains("ndk")) {
+        task.dependsOn downloadBootstraps
+    }
+}
