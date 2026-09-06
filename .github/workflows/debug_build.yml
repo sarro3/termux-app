@@ -184,11 +184,18 @@ jobs:
           export TERMUX_APK_VERSION_TAG="$APK_VERSION_TAG"
           export TERMUX_PACKAGE_VARIANT="${{ env.PACKAGE_VARIANT }}"
           export TERMUX_SPLIT_APKS_FOR_RELEASE_BUILDS=1
-          if ! ./gradlew assembleRelease; then
+          set -o pipefail
+          ./gradlew assembleRelease --stacktrace 2>&1 | tee gradle-release.log
+          gradle_rc=${PIPESTATUS[0]}
+          echo "gradle_exit=$gradle_rc" | tee gradle-exit.txt
+          find ./app/build -name '*.apk' 2>/dev/null | tee apk-list.txt || true
+          if [ "$gradle_rc" -ne 0 ]; then
             exit_on_error "Release build failed for '$APK_VERSION_TAG' build."
           fi
 
-          echo "Validating APKs"
+          echo "Validating APKs; files in $APK_DIR_PATH:"
+          ls -la "$APK_DIR_PATH" || true
+
           for abi in universal arm64-v8a armeabi-v7a x86_64 x86; do
             if ! test -f "$APK_DIR_PATH/${APK_BASENAME_PREFIX}_$abi.apk"; then
               files_found="$(ls "$APK_DIR_PATH")"
@@ -206,6 +213,17 @@ jobs:
             > "${APK_BASENAME_PREFIX}_sha256sums"); then
             exit_on_error "Generate sha25sums failed for '$APK_VERSION_TAG' release."
           fi
+
+      - name: Upload gradle logs
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: gradle-release-log
+          path: |
+            gradle-release.log
+            gradle-exit.txt
+            apk-list.txt
+          if-no-files-found: warn
 
       - name: Attach universal APK file
         uses: actions/upload-artifact@v6
