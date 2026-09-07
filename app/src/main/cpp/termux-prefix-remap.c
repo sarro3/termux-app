@@ -1,4 +1,5 @@
 #define _GNU_SOURCE
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <stdarg.h>
 #include <stdio.h>
@@ -22,12 +23,32 @@ static size_t g_from_len;
 static size_t g_to_len;
 static int g_enabled;
 
+typedef long (*sys6_t)(long, long, long, long, long, long, long);
+static sys6_t g_sys;
+
+static long raw_sys(long n, long a1, long a2, long a3, long a4, long a5, long a6) {
+    if (g_sys)
+        return g_sys(n, a1, a2, a3, a4, a5, a6);
+    return -1;
+}
+
 static void init_remap(void) __attribute__((constructor));
 static void init_remap(void) {
+    g_sys = (sys6_t) dlsym(RTLD_NEXT, "syscall");
+
     const char *from = getenv("TERMUX_PREFIX_REMAP_FROM");
     const char *to = getenv("TERMUX_PREFIX_REMAP_TO");
-    if (from == NULL || to == NULL || from[0] == '\0' || to[0] == '\0')
-        return;
+    char tobuf[PATH_MAX];
+    if (from == NULL || from[0] == '\0')
+        from = "/data/data/com.termux";
+    if (to == NULL || to[0] == '\0') {
+        int user = (int) (getuid() / 100000);
+        if (user == 0)
+            snprintf(tobuf, sizeof(tobuf), "/data/data/tx.work");
+        else
+            snprintf(tobuf, sizeof(tobuf), "/data/user/%d/tx.work", user);
+        to = tobuf;
+    }
     if (strcmp(from, to) == 0)
         return;
     g_from_len = strlen(from);
@@ -39,7 +60,6 @@ static void init_remap(void) {
     g_enabled = 1;
 }
 
-/* Strict ancestor of g_from, excluding "/" and "/data" (those are public). */
 static int is_from_ancestor(const char *path, size_t path_len) {
     if (path_len < 6 || path_len >= g_from_len)
         return 0;
@@ -76,14 +96,14 @@ static const char *remap_abs(const char *path, char *buf, size_t buf_size) {
 
 static int fd_dir_path(int dirfd, char *out, size_t outsz) {
     if (dirfd == AT_FDCWD) {
-        long n = syscall(SYS_getcwd, out, outsz);
+        long n = raw_sys(SYS_getcwd, (long) out, (long) outsz, 0, 0, 0, 0);
         return n > 0 ? 0 : -1;
     }
     char proc[64];
     int pn = snprintf(proc, sizeof(proc), "/proc/self/fd/%d", dirfd);
     if (pn < 0 || pn >= (int) sizeof(proc))
         return -1;
-    ssize_t n = syscall(SYS_readlinkat, AT_FDCWD, proc, out, outsz - 1);
+    ssize_t n = raw_sys(SYS_readlinkat, AT_FDCWD, (long) proc, (long) out, (long) (outsz - 1), 0, 0);
     if (n < 0)
         return -1;
     out[n] = '\0';
@@ -104,7 +124,6 @@ static int join_abs(const char *dir, const char *rel, char *out, size_t outsz) {
     return 0;
 }
 
-/* Absolute or dirfd-relative path, remapped. Result always lives in buf when non-NULL. */
 static const char *resolve_and_remap(int dirfd, const char *pathname, char *buf, size_t bufsz) {
     if (pathname == NULL)
         return NULL;
@@ -132,10 +151,10 @@ static int dirfd_for_mapped(int dirfd, const char *mapped) {
     return dirfd;
 }
 
-static int mapped_is_ancestor(const char *mapped) {
-    if (!g_enabled || mapped == NULL || mapped[0] != '/')
-        return 0;
-    return is_from_ancestor(mapped, strlen(mapped));
+static void remap_at_path(int *dirfd, const char **pathname, char *buf, size_t bufsz) {
+    const char *mapped = resolve_and_remap(*dirfd, *pathname, buf, bufsz);
+    *dirfd = dirfd_for_mapped(*dirfd, mapped);
+    *pathname = mapped;
 }
 
 int openat(int dirfd, const char *pathname, int flags, ...) {
@@ -147,11 +166,10 @@ int openat(int dirfd, const char *pathname, int flags, ...) {
         va_end(ap);
     }
     char buf[PATH_MAX];
-    const char *mapped = resolve_and_remap(dirfd, pathname, buf, sizeof(buf));
-    int d = dirfd_for_mapped(dirfd, mapped);
+    remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
     if (flags & O_CREAT)
-        return (int) syscall(SYS_openat, d, mapped, flags, mode);
-    return (int) syscall(SYS_openat, d, mapped, flags);
+        return (int) raw_sys(SYS_openat, dirfd, (long) pathname, flags, mode, 0, 0);
+    return (int) raw_sys(SYS_openat, dirfd, (long) pathname, flags, 0, 0, 0);
 }
 
 int open(const char *pathname, int flags, ...) {
@@ -170,13 +188,13 @@ int open(const char *pathname, int flags, ...) {
 int access(const char *pathname, int mode) {
     char buf[PATH_MAX];
     const char *mapped = resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_faccessat, AT_FDCWD, mapped, mode, 0);
+    return (int) raw_sys(SYS_faccessat, AT_FDCWD, (long) mapped, mode, 0, 0, 0);
 }
 
 int faccessat(int dirfd, const char *pathname, int mode, int flags) {
     char buf[PATH_MAX];
-    const char *mapped = resolve_and_remap(dirfd, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_faccessat, dirfd_for_mapped(dirfd, mapped), mapped, mode, flags);
+    remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
+    return (int) raw_sys(SYS_faccessat, dirfd, (long) pathname, mode, flags, 0, 0);
 }
 
 #if defined(SYS_newfstatat)
@@ -191,15 +209,15 @@ int faccessat(int dirfd, const char *pathname, int mode, int flags) {
 
 int fstatat(int dirfd, const char *pathname, struct stat *statbuf, int flags) {
     char buf[PATH_MAX];
-    const char *mapped = resolve_and_remap(dirfd, pathname, buf, sizeof(buf));
-    return (int) syscall(STATAT_NR, dirfd_for_mapped(dirfd, mapped), mapped, statbuf, flags);
+    remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
+    return (int) raw_sys(STATAT_NR, dirfd, (long) pathname, (long) statbuf, flags, 0, 0);
 }
 
 #ifdef SYS_statx
 int statx(int dirfd, const char *pathname, int flags, unsigned int mask, void *statxbuf) {
     char buf[PATH_MAX];
-    const char *mapped = resolve_and_remap(dirfd, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_statx, dirfd_for_mapped(dirfd, mapped), mapped, flags, mask, statxbuf);
+    remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
+    return (int) raw_sys(SYS_statx, dirfd, (long) pathname, flags, mask, (long) statxbuf, 0);
 }
 #endif
 
@@ -217,11 +235,8 @@ int mkdir(const char *pathname, mode_t mode) {
 
 int mkdirat(int dirfd, const char *pathname, mode_t mode) {
     char buf[PATH_MAX];
-    const char *mapped = resolve_and_remap(dirfd, pathname, buf, sizeof(buf));
-    if (mapped_is_ancestor(mapped))
-        return 0;
-    /* After remap, ancestor /data/data becomes g_to; mkdir of existing prefix is fine. */
-    int r = (int) syscall(SYS_mkdirat, dirfd_for_mapped(dirfd, mapped), mapped, mode);
+    remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
+    int r = (int) raw_sys(SYS_mkdirat, dirfd, (long) pathname, mode, 0, 0, 0);
     if (r != 0 && errno == EEXIST)
         return 0;
     return r;
@@ -229,42 +244,43 @@ int mkdirat(int dirfd, const char *pathname, mode_t mode) {
 
 int chdir(const char *pathname) {
     char buf[PATH_MAX];
-    return (int) syscall(SYS_chdir, resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf)));
+    return (int) raw_sys(SYS_chdir, (long) resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf)), 0, 0, 0, 0, 0);
 }
 
 int unlink(const char *pathname) {
     char buf[PATH_MAX];
     const char *mapped = resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_unlinkat, AT_FDCWD, mapped, 0);
+    return (int) raw_sys(SYS_unlinkat, AT_FDCWD, (long) mapped, 0, 0, 0, 0);
 }
 
 int unlinkat(int dirfd, const char *pathname, int flags) {
     char buf[PATH_MAX];
-    const char *mapped = resolve_and_remap(dirfd, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_unlinkat, dirfd_for_mapped(dirfd, mapped), mapped, flags);
+    remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
+    return (int) raw_sys(SYS_unlinkat, dirfd, (long) pathname, flags, 0, 0, 0);
 }
 
 int rmdir(const char *pathname) {
     char buf[PATH_MAX];
     const char *mapped = resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_unlinkat, AT_FDCWD, mapped, AT_REMOVEDIR);
+    return (int) raw_sys(SYS_unlinkat, AT_FDCWD, (long) mapped, AT_REMOVEDIR, 0, 0, 0);
 }
 
 int chmod(const char *pathname, mode_t mode) {
     char buf[PATH_MAX];
     const char *mapped = resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_fchmodat, AT_FDCWD, mapped, mode);
+    return (int) raw_sys(SYS_fchmodat, AT_FDCWD, (long) mapped, mode, 0, 0, 0);
 }
 
 int fchmodat(int dirfd, const char *pathname, mode_t mode, int flags) {
     char buf[PATH_MAX];
-    const char *mapped = resolve_and_remap(dirfd, pathname, buf, sizeof(buf));
-    return (int) syscall(SYS_fchmodat, dirfd_for_mapped(dirfd, mapped), mapped, mode, flags);
+    remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
+    return (int) raw_sys(SYS_fchmodat, dirfd, (long) pathname, mode, flags, 0, 0);
 }
 
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
     char buf[PATH_MAX];
-    return (int) syscall(SYS_execve, resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf)), argv, envp);
+    return (int) raw_sys(SYS_execve, (long) resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf)),
+                         (long) argv, (long) envp, 0, 0, 0);
 }
 
 FILE *fopen(const char *pathname, const char *mode) {
@@ -290,7 +306,7 @@ DIR *opendir(const char *pathname) {
 ssize_t readlink(const char *pathname, char *buf_out, size_t bufsiz) {
     char buf[PATH_MAX];
     const char *mapped = resolve_and_remap(AT_FDCWD, pathname, buf, sizeof(buf));
-    return syscall(SYS_readlinkat, AT_FDCWD, mapped, buf_out, bufsiz);
+    return raw_sys(SYS_readlinkat, AT_FDCWD, (long) mapped, (long) buf_out, (long) bufsiz, 0, 0);
 }
 
 int symlink(const char *target, const char *linkpath) {
@@ -298,7 +314,7 @@ int symlink(const char *target, const char *linkpath) {
     char lbuf[PATH_MAX];
     const char *tm = resolve_and_remap(AT_FDCWD, target, tbuf, sizeof(tbuf));
     const char *lm = resolve_and_remap(AT_FDCWD, linkpath, lbuf, sizeof(lbuf));
-    return (int) syscall(SYS_symlinkat, tm, AT_FDCWD, lm);
+    return (int) raw_sys(SYS_symlinkat, (long) tm, AT_FDCWD, (long) lm, 0, 0, 0);
 }
 
 int rename(const char *oldpath, const char *newpath) {
@@ -306,16 +322,15 @@ int rename(const char *oldpath, const char *newpath) {
     char nbuf[PATH_MAX];
     const char *om = resolve_and_remap(AT_FDCWD, oldpath, obuf, sizeof(obuf));
     const char *nm = resolve_and_remap(AT_FDCWD, newpath, nbuf, sizeof(nbuf));
-    return (int) syscall(SYS_renameat, AT_FDCWD, om, AT_FDCWD, nm);
+    return (int) raw_sys(SYS_renameat, AT_FDCWD, (long) om, AT_FDCWD, (long) nm, 0, 0);
 }
 
 int renameat(int olddirfd, const char *oldpath, int newdirfd, const char *newpath) {
     char obuf[PATH_MAX];
     char nbuf[PATH_MAX];
-    const char *om = resolve_and_remap(olddirfd, oldpath, obuf, sizeof(obuf));
-    const char *nm = resolve_and_remap(newdirfd, newpath, nbuf, sizeof(nbuf));
-    return (int) syscall(SYS_renameat, dirfd_for_mapped(olddirfd, om), om,
-                         dirfd_for_mapped(newdirfd, nm), nm);
+    remap_at_path(&olddirfd, &oldpath, obuf, sizeof(obuf));
+    remap_at_path(&newdirfd, &newpath, nbuf, sizeof(nbuf));
+    return (int) raw_sys(SYS_renameat, olddirfd, (long) oldpath, newdirfd, (long) newpath, 0, 0);
 }
 
 char *realpath(const char *pathname, char *resolved) {
@@ -337,4 +352,41 @@ char *realpath(const char *pathname, char *resolved) {
     }
     memcpy(resolved, mapped, n + 1);
     return resolved;
+}
+
+/* dpkg/gnulib often call syscall(SYS_statx, ...) and skip libc wrappers. */
+long syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6) {
+    if (g_enabled && g_sys) {
+        char buf[PATH_MAX];
+        const char *p;
+        int d;
+#ifdef SYS_statx
+        if (n == SYS_statx) {
+            d = (int) a1;
+            p = (const char *) a2;
+            remap_at_path(&d, &p, buf, sizeof(buf));
+            a1 = d;
+            a2 = (long) p;
+        } else
+#endif
+        if (n == SYS_openat || n == SYS_faccessat || n == STATAT_NR
+            || n == SYS_mkdirat || n == SYS_unlinkat || n == SYS_fchmodat
+            || n == SYS_readlinkat) {
+            d = (int) a1;
+            p = (const char *) a2;
+            remap_at_path(&d, &p, buf, sizeof(buf));
+            a1 = d;
+            a2 = (long) p;
+            if (n == SYS_mkdirat) {
+                long r = raw_sys(n, a1, a2, a3, a4, a5, a6);
+                if (r != 0 && errno == EEXIST)
+                    return 0;
+                return r;
+            }
+        } else if (n == SYS_chdir || n == SYS_execve) {
+            p = (const char *) a1;
+            a1 = (long) resolve_and_remap(AT_FDCWD, p, buf, sizeof(buf));
+        }
+    }
+    return raw_sys(n, a1, a2, a3, a4, a5, a6);
 }

@@ -8,4 +8,5 @@ include $(BUILD_SHARED_LIBRARY)
 include $(CLEAR_VARS)
 LOCAL_MODULE := libtermux-prefix-remap
 LOCAL_SRC_FILES := termux-prefix-remap.c
+LOCAL_LDLIBS := -ldl
 include $(BUILD_SHARED_LIBRARY)

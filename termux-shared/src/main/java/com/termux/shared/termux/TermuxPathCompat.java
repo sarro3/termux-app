@@ -232,8 +232,8 @@ public final class TermuxPathCompat {
     public static void putRemapEnvironment(@NonNull java.util.Map<String, String> environment) {
         if (!sNeedsRemap)
             return;
-        File inPrefix = new File(sPhysicalFilesDir + "/usr/lib/" + REMAP_LIBRARY_NAME);
-        String lib = inPrefix.isFile() ? inPrefix.getAbsolutePath() : sRemapLibraryPath;
+        // Bionic only loads LD_PRELOAD from the APK native lib dir (not $PREFIX/lib).
+        String lib = sRemapLibraryPath;
         if (lib == null)
             return;
         environment.put(ENV_REMAP_FROM, TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH);
