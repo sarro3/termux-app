@@ -8,6 +8,7 @@
 #include <unistd.h>
 #include <dirent.h>
 #include <sys/stat.h>
+#include <linux/stat.h>
 #include <sys/syscall.h>
 #include <sys/types.h>
 #include <limits.h>
@@ -23,8 +24,8 @@ static size_t g_from_len;
 static size_t g_to_len;
 static int g_enabled;
 
-typedef long (*sys6_t)(long, long, long, long, long, long, long);
-static sys6_t g_sys;
+typedef long (*sysv_t)(long, ...);
+static sysv_t g_sys;
 
 static long raw_sys(long n, long a1, long a2, long a3, long a4, long a5, long a6) {
     if (g_sys)
@@ -34,7 +35,7 @@ static long raw_sys(long n, long a1, long a2, long a3, long a4, long a5, long a6
 
 static void init_remap(void) __attribute__((constructor));
 static void init_remap(void) {
-    g_sys = (sys6_t) dlsym(RTLD_NEXT, "syscall");
+    g_sys = (sysv_t) dlsym(RTLD_NEXT, "syscall");
 
     const char *from = getenv("TERMUX_PREFIX_REMAP_FROM");
     const char *to = getenv("TERMUX_PREFIX_REMAP_TO");
@@ -214,7 +215,7 @@ int fstatat(int dirfd, const char *pathname, struct stat *statbuf, int flags) {
 }
 
 #ifdef SYS_statx
-int statx(int dirfd, const char *pathname, int flags, unsigned int mask, void *statxbuf) {
+int statx(int dirfd, const char *pathname, int flags, unsigned int mask, struct statx *statxbuf) {
     char buf[PATH_MAX];
     remap_at_path(&dirfd, &pathname, buf, sizeof(buf));
     return (int) raw_sys(SYS_statx, dirfd, (long) pathname, flags, mask, (long) statxbuf, 0);
@@ -355,7 +356,16 @@ char *realpath(const char *pathname, char *resolved) {
 }
 
 /* dpkg/gnulib often call syscall(SYS_statx, ...) and skip libc wrappers. */
-long syscall(long n, long a1, long a2, long a3, long a4, long a5, long a6) {
+long syscall(long n, ...) {
+    va_list ap;
+    va_start(ap, n);
+    long a1 = va_arg(ap, long);
+    long a2 = va_arg(ap, long);
+    long a3 = va_arg(ap, long);
+    long a4 = va_arg(ap, long);
+    long a5 = va_arg(ap, long);
+    long a6 = va_arg(ap, long);
+    va_end(ap);
     if (g_enabled && g_sys) {
         char buf[PATH_MAX];
         const char *p;
