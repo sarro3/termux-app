@@ -348,8 +348,14 @@ public final class TermuxConstants {
 
     /** Termux app name */
     public static final String TERMUX_APP_NAME = "Termux Work"; // Default: "Termux"
-    /** Android applicationId. Distinct from official Termux so both can be installed (e.g. personal + work profile). */
-    public static final String TERMUX_PACKAGE_NAME = "com.termux.work"; // Default: "com.termux"
+    /**
+     * Android applicationId. Must be 7 characters ({@code tx.work}) so that
+     * {@code /data/user/&lt;NN&gt;/tx.work} is the same length as the bootstrap prefix
+     * {@code /data/data/com.termux} (21). That lets ELF/dpkg/bash be patched in place
+     * on a work profile (the intended primary user of this fork) without replacing
+     * official {@code com.termux} in the personal profile.
+     */
+    public static final String TERMUX_PACKAGE_NAME = "tx.work"; // Default: "com.termux"
     /** Java namespace / R8 class package. Must stay {@code com.termux} while applicationId changes. */
     public static final String TERMUX_JAVA_PACKAGE_NAME = "com.termux";
     /** App-data path baked into official bootstrap binaries. Always remapped onto this app's files dir. */

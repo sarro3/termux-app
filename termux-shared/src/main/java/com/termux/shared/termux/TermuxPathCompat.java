@@ -8,11 +8,18 @@ import androidx.annotation.Nullable;
 import com.termux.shared.logger.Logger;
 
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
 
 /**
  * Maps the hardcoded Termux prefix {@code /data/data/com.termux} used by bootstrap binaries
- * onto this app's real data directory ({@code /data/data/com.termux.work} or
- * {@code /data/user/<id>/com.termux.work} on work profiles).
+ * onto this app's real data directory.
+ * <p>
+ * Work-profile as the "main" user: applicationId {@code tx.work} is 7 chars so
+ * {@code /data/user/&lt;NN&gt;/tx.work} is the same length as {@code /data/data/com.termux}
+ * (21). Bootstrap ELF strings can be patched in place. Extra slashes pad shorter paths
+ * (primary user) because the kernel collapses {@code //}.
  */
 public final class TermuxPathCompat {
 
@@ -26,8 +33,11 @@ public final class TermuxPathCompat {
     private static volatile boolean sInitialized;
     private static String sPhysicalAppDataDir = TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
     private static String sPhysicalFilesDir = TermuxConstants.TERMUX_FILES_DIR_PATH;
+    /** Same-length stand-in for {@link TermuxConstants#TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH}. */
+    private static String sPaddedAppDataDir = TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH;
     private static String sRemapLibraryPath;
     private static boolean sNeedsRemap;
+    private static boolean sCanPatchInPlace;
 
     private TermuxPathCompat() {}
 
@@ -42,8 +52,6 @@ public final class TermuxPathCompat {
                 ? filesDir.getParent()
                 : TermuxConstants.TERMUX_INTERNAL_PRIVATE_APP_DATA_DIR_PATH;
         }
-        // Work profile / secondary users: native chdir/exec cannot use /data/data/<pkg>
-        // (that path belongs to user 0). Force /data/user/<id>/<pkg>.
         int userId = android.os.Process.myUid() / 100000;
         if (userId != 0) {
             String pkg = context.getPackageName();
@@ -54,8 +62,13 @@ public final class TermuxPathCompat {
             if (sPhysicalFilesDir.startsWith("/data/user/0/"))
                 sPhysicalFilesDir = "/data/data/" + sPhysicalFilesDir.substring("/data/user/0/".length());
         }
+        sPaddedAppDataDir = sameLengthAlias(sPhysicalAppDataDir, TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH);
+        sCanPatchInPlace = sPaddedAppDataDir != null
+            && sPaddedAppDataDir.length() == TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH.length();
+        if (sPaddedAppDataDir == null)
+            sPaddedAppDataDir = sPhysicalAppDataDir;
+
         String normalizedPhysical = sPhysicalAppDataDir.replaceFirst("^/data/user/0/", "/data/data/");
-        // Remap whenever this is not the official bootstrap prefix (forked applicationId and/or work profile).
         sNeedsRemap = !normalizedPhysical.equals(TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH);
 
         File nativeLib = new File(context.getApplicationInfo().nativeLibraryDir, REMAP_LIBRARY_NAME);
@@ -63,10 +76,29 @@ public final class TermuxPathCompat {
 
         sInitialized = true;
         if (sNeedsRemap) {
-            Logger.logInfo(LOG_TAG, "Prefix remap enabled: "
-                + TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH + " -> " + sPhysicalAppDataDir
-                + (sRemapLibraryPath != null ? " (preload " + sRemapLibraryPath + ")" : " (preload library missing)"));
+            Logger.logInfo(LOG_TAG, "Prefix remap: "
+                + TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH + " -> physical " + sPhysicalAppDataDir
+                + " padded " + sPaddedAppDataDir
+                + (sCanPatchInPlace ? " (in-place ELF patch)" : " (LD_PRELOAD only)"));
         }
+    }
+
+    /**
+     * Insert extra {@code /} so {@code physical} is the same length as {@code logical}.
+     * Returns null if physical is longer (cannot patch ELF in place).
+     */
+    @Nullable
+    public static String sameLengthAlias(@NonNull String physical, @NonNull String logical) {
+        if (physical.length() == logical.length())
+            return physical;
+        if (physical.length() > logical.length())
+            return null;
+        int extra = logical.length() - physical.length();
+        int insertAt = physical.startsWith("/data") ? 5 : 1;
+        StringBuilder sb = new StringBuilder(physical);
+        for (int i = 0; i < extra; i++)
+            sb.insert(insertAt, '/');
+        return sb.toString();
     }
 
     public static boolean isInitialized() {
@@ -77,9 +109,18 @@ public final class TermuxPathCompat {
         return sNeedsRemap;
     }
 
+    public static boolean canPatchInPlace() {
+        return sCanPatchInPlace;
+    }
+
     @NonNull
     public static String getPhysicalAppDataDir() {
         return sPhysicalAppDataDir;
+    }
+
+    @NonNull
+    public static String getPaddedAppDataDir() {
+        return sPaddedAppDataDir;
     }
 
     @NonNull
@@ -114,7 +155,80 @@ public final class TermuxPathCompat {
         return sRemapLibraryPath;
     }
 
-    /** Put remap environment variables used by libtermux-prefix-remap.so into {@code environment}. */
+    /** Replace bootstrap prefix bytes in every file under {@code dir} (ELF and text). */
+    public static int patchBootstrapPrefixInTree(@Nullable File dir) {
+        if (dir == null || !sCanPatchInPlace)
+            return 0;
+        byte[] from = TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH.getBytes(StandardCharsets.US_ASCII);
+        byte[] to = sPaddedAppDataDir.getBytes(StandardCharsets.US_ASCII);
+        if (from.length != to.length)
+            return 0;
+        return patchTree(dir, from, to);
+    }
+
+    private static int patchTree(File dir, byte[] from, byte[] to) {
+        File[] children = dir.listFiles();
+        if (children == null)
+            return 0;
+        int n = 0;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                n += patchTree(child, from, to);
+                continue;
+            }
+            if (!child.isFile() || child.length() < from.length || child.length() > 64L * 1024 * 1024)
+                continue;
+            try {
+                if (patchFile(child, from, to))
+                    n++;
+            } catch (Exception ignored) {
+            }
+        }
+        return n;
+    }
+
+    private static boolean patchFile(File file, byte[] from, byte[] to) throws java.io.IOException {
+        byte[] data;
+        try (FileInputStream in = new FileInputStream(file)) {
+            data = new byte[(int) file.length()];
+            int off = 0;
+            while (off < data.length) {
+                int r = in.read(data, off, data.length - off);
+                if (r < 0)
+                    break;
+                off += r;
+            }
+        }
+        boolean changed = false;
+        int i = 0;
+        while (i <= data.length - from.length) {
+            if (matchAt(data, i, from)) {
+                int after = i + from.length;
+                if (after == data.length || data[after] == 0 || data[after] == '/') {
+                    System.arraycopy(to, 0, data, i, to.length);
+                    changed = true;
+                    i += to.length;
+                    continue;
+                }
+            }
+            i++;
+        }
+        if (!changed)
+            return false;
+        try (FileOutputStream out = new FileOutputStream(file, false)) {
+            out.write(data);
+        }
+        return true;
+    }
+
+    private static boolean matchAt(byte[] data, int off, byte[] needle) {
+        for (int j = 0; j < needle.length; j++) {
+            if (data[off + j] != needle[j])
+                return false;
+        }
+        return true;
+    }
+
     public static void putRemapEnvironment(@NonNull java.util.Map<String, String> environment) {
         if (!sNeedsRemap)
             return;

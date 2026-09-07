@@ -1,6 +1,6 @@
-# Cómo generar e instalar los APKs de Termux Work (`com.termux.work`)
+# Cómo generar e instalar los APKs de Termux Work (`tx.work`)
 
-Esta build **no reemplaza** Termux oficial (`com.termux`). El `applicationId` es `com.termux.work` y el launcher muestra **Termux Work**.
+Esta build **no reemplaza** Termux oficial (`com.termux`). El `applicationId` es `tx.work` (7 caracteres, mismo largo de PREFIX que `/data/data/com.termux` en usuarios 10–99) y el launcher muestra **Termux Work**. Hay que **desinstalar** `com.termux.work` si lo tenías.
 
 Usa **Android 7+** → variante `apt-android-7`.  
 `apt-android-5` solo es para Android 5/6 y **no** recibe paquetes actualizados.

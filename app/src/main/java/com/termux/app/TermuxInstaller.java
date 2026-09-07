@@ -108,8 +108,13 @@ final class TermuxInstaller {
                 Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + prefixDirPath + "\" exists but is empty or only contains specific unimportant files.");
             } else {
                 if (TermuxPathCompat.needsRemap()) {
-                    Logger.logInfo(LOG_TAG, "Rewriting hardcoded bootstrap prefix under existing prefix dir.");
-                    rewriteHardcodedPrefixUnder(prefixDir);
+                    if (TermuxPathCompat.canPatchInPlace()) {
+                        int n = TermuxPathCompat.patchBootstrapPrefixInTree(prefixDir);
+                        Logger.logInfo(LOG_TAG, "Patched bootstrap prefix in place in " + n + " files.");
+                    } else {
+                        Logger.logInfo(LOG_TAG, "Rewriting hardcoded bootstrap prefix under existing prefix dir.");
+                        rewriteHardcodedPrefixUnder(prefixDir);
+                    }
                     installWorkProfileGlue(activity, prefixDir);
                 }
                 whenDone.run();
@@ -215,7 +220,12 @@ final class TermuxInstaller {
                         Os.symlink(symlink.first, symlink.second);
                     }
 
-                    rewriteHardcodedPrefixUnder(stagingPrefixDir);
+                    if (TermuxPathCompat.canPatchInPlace()) {
+                        int n = TermuxPathCompat.patchBootstrapPrefixInTree(stagingPrefixDir);
+                        Logger.logInfo(LOG_TAG, "Patched bootstrap prefix in place in " + n + " staging files.");
+                    } else {
+                        rewriteHardcodedPrefixUnder(stagingPrefixDir);
+                    }
                     installWorkProfileGlue(activity, stagingPrefixDir);
 
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
@@ -384,7 +394,8 @@ final class TermuxInstaller {
     }
 
     /**
-     * Copy the remap library into $PREFIX/lib and replace {@code bin/login} so bash is not
+     * Copy the remap library into $PREFIX/lib. If PREFIX cannot be patched in place
+     * (path longer than bootstrap), also replace {@code bin/login} so bash is not
      * started as a login shell (compiled SYSCONFDIR is {@code /data/data/com.termux/files/usr/etc}).
      */
     private static void installWorkProfileGlue(Context context, File prefixDir) {
@@ -398,6 +409,11 @@ final class TermuxInstaller {
             if (src.isFile()) {
                 copyFile(src, dst);
                 Os.chmod(dst.getAbsolutePath(), 0755);
+            }
+
+            if (TermuxPathCompat.canPatchInPlace()) {
+                Logger.logInfo(LOG_TAG, "Same-length PREFIX; keeping bootstrap login under " + prefixDir);
+                return;
             }
 
             File etcTermux = new File(prefixDir, "etc/termux");
