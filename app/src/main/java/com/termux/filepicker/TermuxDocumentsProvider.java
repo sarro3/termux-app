@@ -13,6 +13,7 @@ import android.webkit.MimeTypeMap;
 
 import com.termux.R;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.TermuxPathCompat;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -35,7 +36,9 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
 
     private static final String ALL_MIME_TYPES = "*/*";
 
-    private static final File BASE_DIR = TermuxConstants.TERMUX_HOME_DIR;
+    private static File getBaseDir() {
+        return new File(TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH));
+    }
 
 
     // The default columns to return information about a root if no specific
@@ -68,13 +71,14 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
         final String applicationName = getContext().getString(R.string.application_name);
 
         final MatrixCursor.RowBuilder row = result.newRow();
-        row.add(Root.COLUMN_ROOT_ID, getDocIdForFile(BASE_DIR));
-        row.add(Root.COLUMN_DOCUMENT_ID, getDocIdForFile(BASE_DIR));
+        File baseDir = getBaseDir();
+        row.add(Root.COLUMN_ROOT_ID, getDocIdForFile(baseDir));
+        row.add(Root.COLUMN_DOCUMENT_ID, getDocIdForFile(baseDir));
         row.add(Root.COLUMN_SUMMARY, null);
         row.add(Root.COLUMN_FLAGS, Root.FLAG_SUPPORTS_CREATE | Root.FLAG_SUPPORTS_SEARCH | Root.FLAG_SUPPORTS_IS_CHILD);
         row.add(Root.COLUMN_TITLE, applicationName);
         row.add(Root.COLUMN_MIME_TYPES, ALL_MIME_TYPES);
-        row.add(Root.COLUMN_AVAILABLE_BYTES, BASE_DIR.getFreeSpace());
+        row.add(Root.COLUMN_AVAILABLE_BYTES, baseDir.getFreeSpace());
         row.add(Root.COLUMN_ICON, R.mipmap.ic_launcher);
         return result;
     }
@@ -112,6 +116,8 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
 
     @Override
     public boolean onCreate() {
+        if (getContext() != null)
+            TermuxPathCompat.init(getContext());
         return true;
     }
 
@@ -171,7 +177,7 @@ public class TermuxDocumentsProvider extends DocumentsProvider {
             // through the whole SD card).
             boolean isInsideHome;
             try {
-                isInsideHome = file.getCanonicalPath().startsWith(TermuxConstants.TERMUX_HOME_DIR_PATH);
+                isInsideHome = file.getCanonicalPath().startsWith(TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH));
             } catch (IOException e) {
                 isInsideHome = true;
             }

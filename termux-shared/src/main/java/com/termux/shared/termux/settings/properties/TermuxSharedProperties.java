@@ -663,7 +663,8 @@ public abstract class TermuxSharedProperties {
     }
 
     public String getDefaultWorkingDirectory() {
-        return (String) getInternalPropertyValue(TermuxPropertyConstants.KEY_DEFAULT_WORKING_DIRECTORY, true);
+        String path = (String) getInternalPropertyValue(TermuxPropertyConstants.KEY_DEFAULT_WORKING_DIRECTORY, true);
+        return com.termux.shared.termux.TermuxPathCompat.toPhysical(path);
     }
 
     public String getNightMode() {

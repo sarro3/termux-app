@@ -19,6 +19,7 @@ import com.termux.shared.interact.MessageDialogUtils;
 import com.termux.shared.net.uri.UriScheme;
 import com.termux.shared.termux.interact.TextInputDialogUtils;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.TermuxPathCompat;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP;
 import com.termux.shared.termux.TermuxConstants.TERMUX_APP.TERMUX_SERVICE;
 import com.termux.app.TermuxService;
@@ -38,9 +39,15 @@ import java.util.regex.Pattern;
 
 public class FileReceiverActivity extends AppCompatActivity {
 
-    static final String TERMUX_RECEIVEDIR = TermuxConstants.TERMUX_FILES_DIR_PATH + "/home/downloads";
-    static final String EDITOR_PROGRAM = TermuxConstants.TERMUX_HOME_DIR_PATH + "/bin/termux-file-editor";
-    static final String URL_OPENER_PROGRAM = TermuxConstants.TERMUX_HOME_DIR_PATH + "/bin/termux-url-opener";
+    static String getReceiveDir() {
+        return TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_FILES_DIR_PATH + "/home/downloads");
+    }
+    static String getEditorProgram() {
+        return TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH + "/bin/termux-file-editor");
+    }
+    static String getUrlOpenerProgram() {
+        return TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH + "/bin/termux-url-opener");
+    }
 
     /**
      * If the activity should be finished when the name input dialog is dismissed. This is disabled
@@ -165,7 +172,7 @@ public class FileReceiverActivity extends AppCompatActivity {
                 File outFile = saveStreamWithName(in, text);
                 if (outFile == null) return;
 
-                final File editorProgramFile = new File(EDITOR_PROGRAM);
+                final File editorProgramFile = new File(getEditorProgram());
                 if (!editorProgramFile.isFile()) {
                     showErrorDialogAndQuit("The following file does not exist:\n$HOME/bin/termux-file-editor\n\n"
                         + "Create this file as a script or a symlink - it will be called with the received file as only argument.");
@@ -176,7 +183,7 @@ public class FileReceiverActivity extends AppCompatActivity {
                 //noinspection ResultOfMethodCallIgnored
                 editorProgramFile.setExecutable(true);
 
-                final Uri scriptUri = UriUtils.getFileUri(EDITOR_PROGRAM);
+                final Uri scriptUri = UriUtils.getFileUri(getEditorProgram());
 
                 Intent executeIntent = new Intent(TERMUX_SERVICE.ACTION_SERVICE_EXECUTE, scriptUri);
                 executeIntent.setClass(FileReceiverActivity.this, TermuxService.class);
@@ -188,7 +195,7 @@ public class FileReceiverActivity extends AppCompatActivity {
                 if (saveStreamWithName(in, text) == null) return;
 
                 Intent executeIntent = new Intent(TERMUX_SERVICE.ACTION_SERVICE_EXECUTE);
-                executeIntent.putExtra(TERMUX_SERVICE.EXTRA_WORKDIR, TERMUX_RECEIVEDIR);
+                executeIntent.putExtra(TERMUX_SERVICE.EXTRA_WORKDIR, getReceiveDir());
                 executeIntent.setClass(FileReceiverActivity.this, TermuxService.class);
                 startService(executeIntent);
                 finish();
@@ -199,7 +206,7 @@ public class FileReceiverActivity extends AppCompatActivity {
     }
 
     public File saveStreamWithName(InputStream in, String attachmentFileName) {
-        File receiveDir = new File(TERMUX_RECEIVEDIR);
+        File receiveDir = new File(getReceiveDir());
 
         if (DataUtils.isNullOrEmpty(attachmentFileName)) {
             showErrorDialogAndQuit("File name cannot be null or empty");
@@ -229,7 +236,7 @@ public class FileReceiverActivity extends AppCompatActivity {
     }
 
     void handleUrlAndFinish(final String url) {
-        final File urlOpenerProgramFile = new File(URL_OPENER_PROGRAM);
+        final File urlOpenerProgramFile = new File(getUrlOpenerProgram());
         if (!urlOpenerProgramFile.isFile()) {
             showErrorDialogAndQuit("The following file does not exist:\n$HOME/bin/termux-url-opener\n\n"
                 + "Create this file as a script or a symlink - it will be called with the shared URL as the first argument.");
@@ -240,7 +247,7 @@ public class FileReceiverActivity extends AppCompatActivity {
         //noinspection ResultOfMethodCallIgnored
         urlOpenerProgramFile.setExecutable(true);
 
-        final Uri urlOpenerProgramUri = UriUtils.getFileUri(URL_OPENER_PROGRAM);
+        final Uri urlOpenerProgramUri = UriUtils.getFileUri(getUrlOpenerProgram());
 
         Intent executeIntent = new Intent(TERMUX_SERVICE.ACTION_SERVICE_EXECUTE, urlOpenerProgramUri);
         executeIntent.setClass(FileReceiverActivity.this, TermuxService.class);

@@ -6,6 +6,7 @@ import androidx.annotation.Nullable;
 import com.termux.shared.errors.Error;
 import com.termux.shared.file.filesystem.FileTypes;
 import com.termux.shared.termux.TermuxConstants;
+import com.termux.shared.termux.TermuxPathCompat;
 import com.termux.shared.file.FileUtils;
 import com.termux.shared.logger.Logger;
 import com.termux.shared.termux.settings.properties.TermuxAppSharedProperties;
@@ -57,7 +58,12 @@ public class TermuxShellUtils {
                                     if (shebangExecutable.startsWith("/usr") || shebangExecutable.startsWith("/bin")) {
                                         String[] parts = shebangExecutable.split("/");
                                         String binary = parts[parts.length - 1];
-                                        interpreter = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/" + binary;
+                                        interpreter = TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH) + "/" + binary;
+                                    } else {
+                                        // Kernel shebang lookup cannot follow LD_PRELOAD remapping.
+                                        String remapped = TermuxPathCompat.toPhysical(shebangExecutable);
+                                        if (!remapped.equals(shebangExecutable))
+                                            interpreter = remapped;
                                     }
                                     break;
                                 }
@@ -67,7 +73,7 @@ public class TermuxShellUtils {
                         }
                     } else {
                         // No shebang and no ELF, use standard shell.
-                        interpreter = TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH + "/sh";
+                        interpreter = TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_BIN_PREFIX_DIR_PATH) + "/sh";
                     }
                 }
             }
@@ -89,7 +95,7 @@ public class TermuxShellUtils {
         // termux-reset (d6eb5e35). Moreover, TMPDIR must be a directory and not a symlink, this can
         // also allow users who don't want TMPDIR to be cleared automatically on termux exit, since
         // it may remove files still being used by background processes (#1159).
-        if(onlyIfExists && !FileUtils.directoryFileExists(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH, false))
+        if(onlyIfExists && !FileUtils.directoryFileExists(TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH), false))
             return;
 
         Error error;
@@ -105,13 +111,13 @@ public class TermuxShellUtils {
             Logger.logInfo(LOG_TAG, "Not clearing termux $TMPDIR");
         } else if (days == 0) {
             error = FileUtils.clearDirectory("$TMPDIR",
-                FileUtils.getCanonicalPath(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH, null));
+                FileUtils.getCanonicalPath(TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH), null));
             if (error != null) {
                 Logger.logErrorExtended(LOG_TAG, "Failed to clear termux $TMPDIR\n" + error);
             }
         } else {
             error = FileUtils.deleteFilesOlderThanXDays("$TMPDIR",
-                FileUtils.getCanonicalPath(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH, null),
+                FileUtils.getCanonicalPath(TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_TMP_PREFIX_DIR_PATH), null),
                 TrueFileFilter.INSTANCE, days, true, FileTypes.FILE_TYPE_ANY_FLAGS);
             if (error != null) {
                 Logger.logErrorExtended(LOG_TAG, "Failed to delete files from termux $TMPDIR older than " + days + " days\n" + error);

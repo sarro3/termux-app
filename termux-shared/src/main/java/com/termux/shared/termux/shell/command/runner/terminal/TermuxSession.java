@@ -85,6 +85,7 @@ public class TermuxSession {
             executionCommand.workingDirectory = shellEnvironmentClient.getDefaultWorkingDirectoryPath();
         if (executionCommand.workingDirectory.isEmpty())
             executionCommand.workingDirectory = "/";
+        executionCommand.workingDirectory = com.termux.shared.termux.TermuxPathCompat.toPhysical(executionCommand.workingDirectory);
 
         String defaultBinPath = shellEnvironmentClient.getDefaultBinPath();
         if (defaultBinPath.isEmpty())
@@ -113,9 +114,19 @@ public class TermuxSession {
                 // https://cs.android.com/android/platform/superproject/+/android-11.0.0_r3:external/mksh/Android.bp;l=114
                 executionCommand.executable = "/system/bin/sh";
             } else {
-                isLoginShell = true;
+                isLoginShell = !com.termux.shared.termux.TermuxPathCompat.needsRemap()
+                    || com.termux.shared.termux.TermuxPathCompat.canPatchInPlace();
             }
 
+        }
+
+        if (com.termux.shared.termux.TermuxPathCompat.needsRemap()
+            && !com.termux.shared.termux.TermuxPathCompat.canPatchInPlace()
+            && executionCommand.executable != null
+            && executionCommand.executable.endsWith("/bash")
+            && (executionCommand.arguments == null || executionCommand.arguments.length == 0)) {
+            String rc = com.termux.shared.termux.TermuxPathCompat.getPhysicalFilesDir() + "/usr/etc/termux/work-rc.sh";
+            executionCommand.arguments = new String[]{"--noprofile", "--rcfile", rc};
         }
 
         // Setup command args

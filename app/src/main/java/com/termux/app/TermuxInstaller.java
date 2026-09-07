@@ -33,6 +33,8 @@ import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
+import com.termux.shared.termux.TermuxPathCompat;
+
 import static com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR;
 import static com.termux.shared.termux.TermuxConstants.TERMUX_PREFIX_DIR_PATH;
 import static com.termux.shared.termux.TermuxConstants.TERMUX_STAGING_PREFIX_DIR;
@@ -71,19 +73,17 @@ final class TermuxInstaller {
         filesDirectoryAccessibleError = TermuxFileUtils.isTermuxFilesDirectoryAccessible(activity, true, true);
         boolean isFilesDirectoryAccessible = filesDirectoryAccessibleError == null;
 
-        // Termux can only be run as the primary user (device owner) since only that
-        // account has the expected file system paths. Verify that:
+        // Work profile / secondary users store app data under /data/user/<id>/ instead of
+        // /data/data/. TermuxPathCompat remaps the hardcoded $PREFIX used by bootstrap binaries.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N && !PackageUtils.isCurrentUserThePrimaryUser(activity)) {
-            bootstrapErrorMessage = activity.getString(R.string.bootstrap_error_not_primary_user_message,
-                MarkdownUtils.getMarkdownCodeForString(TERMUX_PREFIX_DIR_PATH, false));
-            Logger.logError(LOG_TAG, "isFilesDirectoryAccessible: " + isFilesDirectoryAccessible);
-            Logger.logError(LOG_TAG, bootstrapErrorMessage);
-            sendBootstrapCrashReportNotification(activity, bootstrapErrorMessage);
-            MessageDialogUtils.exitAppWithErrorMessage(activity,
-                activity.getString(R.string.bootstrap_error_title),
-                bootstrapErrorMessage);
-            return;
+            Logger.logInfo(LOG_TAG, "Running as a secondary user or work profile; enabling prefix remapping to "
+                + TermuxPathCompat.getPhysicalAppDataDir());
         }
+
+        final String prefixDirPath = TermuxPathCompat.toPhysical(TERMUX_PREFIX_DIR_PATH);
+        final String stagingPrefixDirPath = TermuxPathCompat.toPhysical(TERMUX_STAGING_PREFIX_DIR_PATH);
+        final File prefixDir = TermuxPathCompat.toPhysicalFile(TERMUX_PREFIX_DIR);
+        final File stagingPrefixDir = TermuxPathCompat.toPhysicalFile(TERMUX_STAGING_PREFIX_DIR);
 
         if (!isFilesDirectoryAccessible) {
             bootstrapErrorMessage = Error.getMinimalErrorString(filesDirectoryAccessibleError);
@@ -103,15 +103,25 @@ final class TermuxInstaller {
         }
 
         // If prefix directory exists, even if its a symlink to a valid directory and symlink is not broken/dangling
-        if (FileUtils.directoryFileExists(TERMUX_PREFIX_DIR_PATH, true)) {
+        if (FileUtils.directoryFileExists(prefixDirPath, true)) {
             if (TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
-                Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" exists but is empty or only contains specific unimportant files.");
+                Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + prefixDirPath + "\" exists but is empty or only contains specific unimportant files.");
             } else {
+                if (TermuxPathCompat.needsRemap()) {
+                    if (TermuxPathCompat.canPatchInPlace()) {
+                        int n = TermuxPathCompat.patchBootstrapPrefixInTree(prefixDir);
+                        Logger.logInfo(LOG_TAG, "Patched bootstrap prefix in place in " + n + " files.");
+                    } else {
+                        Logger.logInfo(LOG_TAG, "Rewriting hardcoded bootstrap prefix under existing prefix dir.");
+                        rewriteHardcodedPrefixUnder(prefixDir);
+                    }
+                    installWorkProfileGlue(activity, prefixDir);
+                }
                 whenDone.run();
                 return;
             }
-        } else if (FileUtils.fileExists(TERMUX_PREFIX_DIR_PATH, false)) {
-            Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + TERMUX_PREFIX_DIR_PATH + "\" does not exist but another file exists at its destination.");
+        } else if (FileUtils.fileExists(prefixDirPath, false)) {
+            Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + prefixDirPath + "\" does not exist but another file exists at its destination.");
         }
 
         final ProgressDialog progress = ProgressDialog.show(activity, null, activity.getString(R.string.bootstrap_installer_body), true, false);
@@ -124,14 +134,14 @@ final class TermuxInstaller {
                     Error error;
 
                     // Delete prefix staging directory or any file at its destination
-                    error = FileUtils.deleteFile("termux prefix staging directory", TERMUX_STAGING_PREFIX_DIR_PATH, true);
+                    error = FileUtils.deleteFile("termux prefix staging directory", stagingPrefixDirPath, true);
                     if (error != null) {
                         showBootstrapErrorDialog(activity, whenDone, Error.getErrorMarkdownString(error));
                         return;
                     }
 
                     // Delete prefix directory or any file at its destination
-                    error = FileUtils.deleteFile("termux prefix directory", TERMUX_PREFIX_DIR_PATH, true);
+                    error = FileUtils.deleteFile("termux prefix directory", prefixDirPath, true);
                     if (error != null) {
                         showBootstrapErrorDialog(activity, whenDone, Error.getErrorMarkdownString(error));
                         return;
@@ -151,7 +161,7 @@ final class TermuxInstaller {
                         return;
                     }
 
-                    Logger.logInfo(LOG_TAG, "Extracting bootstrap zip to prefix staging directory \"" + TERMUX_STAGING_PREFIX_DIR_PATH + "\".");
+                    Logger.logInfo(LOG_TAG, "Extracting bootstrap zip to prefix staging directory \"" + stagingPrefixDirPath + "\".");
 
                     final byte[] buffer = new byte[8096];
                     final List<Pair<String, String>> symlinks = new ArrayList<>(50);
@@ -167,8 +177,8 @@ final class TermuxInstaller {
                                     String[] parts = line.split("←");
                                     if (parts.length != 2)
                                         throw new RuntimeException("Malformed symlink line: " + line);
-                                    String oldPath = parts[0];
-                                    String newPath = TERMUX_STAGING_PREFIX_DIR_PATH + "/" + parts[1];
+                                    String oldPath = TermuxPathCompat.toPhysical(parts[0]);
+                                    String newPath = stagingPrefixDirPath + "/" + parts[1];
                                     symlinks.add(Pair.create(oldPath, newPath));
 
                                     error = ensureDirectoryExists(new File(newPath).getParentFile());
@@ -179,7 +189,7 @@ final class TermuxInstaller {
                                 }
                             } else {
                                 String zipEntryName = zipEntry.getName();
-                                File targetFile = new File(TERMUX_STAGING_PREFIX_DIR_PATH, zipEntryName);
+                                File targetFile = new File(stagingPrefixDirPath, zipEntryName);
                                 boolean isDirectory = zipEntry.isDirectory();
 
                                 error = ensureDirectoryExists(isDirectory ? targetFile : targetFile.getParentFile());
@@ -210,11 +220,23 @@ final class TermuxInstaller {
                         Os.symlink(symlink.first, symlink.second);
                     }
 
+                    if (TermuxPathCompat.canPatchInPlace()) {
+                        int n = TermuxPathCompat.patchBootstrapPrefixInTree(stagingPrefixDir);
+                        Logger.logInfo(LOG_TAG, "Patched bootstrap prefix in place in " + n + " staging files.");
+                    } else {
+                        rewriteHardcodedPrefixUnder(stagingPrefixDir);
+                    }
+                    installWorkProfileGlue(activity, stagingPrefixDir);
+
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
 
-                    if (!TERMUX_STAGING_PREFIX_DIR.renameTo(TERMUX_PREFIX_DIR)) {
+                    if (!stagingPrefixDir.renameTo(prefixDir)) {
                         throw new RuntimeException("Moving termux prefix staging to prefix directory failed");
                     }
+
+                    Error homeError = FileUtils.createDirectoryFile(TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH));
+                    if (homeError != null)
+                        Logger.logError(LOG_TAG, homeError.toString());
 
                     Logger.logInfo(LOG_TAG, "Bootstrap packages installed successfully.");
 
@@ -254,7 +276,7 @@ final class TermuxInstaller {
                     })
                     .setPositiveButton(R.string.bootstrap_error_try_again, (dialog, which) -> {
                         dialog.dismiss();
-                        FileUtils.deleteFile("termux prefix directory", TERMUX_PREFIX_DIR_PATH, true);
+                        FileUtils.deleteFile("termux prefix directory", TermuxPathCompat.toPhysical(TERMUX_PREFIX_DIR_PATH), true);
                         TermuxInstaller.setupBootstrapIfNeeded(activity, whenDone);
                     }).show();
             } catch (WindowManager.BadTokenException e1) {
@@ -284,7 +306,7 @@ final class TermuxInstaller {
             public void run() {
                 try {
                     Error error;
-                    File storageDir = TermuxConstants.TERMUX_STORAGE_HOME_DIR;
+                    File storageDir = TermuxPathCompat.toPhysicalFile(TermuxConstants.TERMUX_STORAGE_HOME_DIR);
 
                     error = FileUtils.clearDirectory("~/storage", storageDir.getAbsolutePath());
                     if (error != null) {
@@ -369,6 +391,165 @@ final class TermuxInstaller {
                 }
             }
         }.start();
+    }
+
+    /**
+     * Copy the remap library into $PREFIX/lib. If PREFIX cannot be patched in place
+     * (path longer than bootstrap), also replace {@code bin/login} so bash is not
+     * started as a login shell (compiled SYSCONFDIR is {@code /data/data/com.termux/files/usr/etc}).
+     */
+    private static void installWorkProfileGlue(Context context, File prefixDir) {
+        if (!TermuxPathCompat.needsRemap() || prefixDir == null)
+            return;
+        try {
+            File libDir = new File(prefixDir, "lib");
+            libDir.mkdirs();
+            File src = new File(context.getApplicationInfo().nativeLibraryDir, TermuxPathCompat.REMAP_LIBRARY_NAME);
+            File dst = new File(libDir, TermuxPathCompat.REMAP_LIBRARY_NAME);
+            if (src.isFile()) {
+                copyFile(src, dst);
+                Os.chmod(dst.getAbsolutePath(), 0755);
+            }
+
+            if (TermuxPathCompat.canPatchInPlace()) {
+                Logger.logInfo(LOG_TAG, "Same-length PREFIX; keeping bootstrap login under " + prefixDir);
+                return;
+            }
+
+            File etcTermux = new File(prefixDir, "etc/termux");
+            etcTermux.mkdirs();
+            File rc = new File(etcTermux, "work-rc.sh");
+            String prefix = prefixDir.getAbsolutePath();
+            String home = TermuxPathCompat.getPhysicalFilesDir() + "/home";
+            String remapSo = prefix + "/lib/" + TermuxPathCompat.REMAP_LIBRARY_NAME;
+            String rcBody = "export PREFIX=\"" + prefix + "\"\n"
+                + "export HOME=\"" + home + "\"\n"
+                + "export PATH=\"$PREFIX/bin:$PATH\"\n"
+                + "export TMPDIR=\"$PREFIX/tmp\"\n"
+                + "export LD_LIBRARY_PATH=\"$PREFIX/lib\"\n"
+                + "export TERMUX_PREFIX_REMAP_FROM=\"" + TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH + "\"\n"
+                + "export TERMUX_PREFIX_REMAP_TO=\"" + TermuxPathCompat.getPhysicalAppDataDir() + "\"\n"
+                + "if [ -f \"" + remapSo + "\" ]; then export LD_PRELOAD=\"" + remapSo + "${LD_PRELOAD:+:$LD_PRELOAD}\"; fi\n"
+                + "if [ -f \"$PREFIX/etc/profile\" ]; then . \"$PREFIX/etc/profile\"; fi\n"
+                + "if [ -f \"" + remapSo + "\" ]; then export LD_PRELOAD=\"" + remapSo + "${LD_PRELOAD:+:$LD_PRELOAD}\"; fi\n"
+                + "if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi\n";
+            writeTextFile(rc, rcBody);
+            Os.chmod(rc.getAbsolutePath(), 0700);
+
+            File login = new File(prefixDir, "bin/login");
+            if (login.exists())
+                login.delete();
+            String loginBody = "#!/system/bin/sh\n"
+                + "PREFIX=\"" + prefix + "\"\n"
+                + "HOME=\"" + home + "\"\n"
+                + "export PREFIX HOME\n"
+                + "export PATH=\"$PREFIX/bin:$PATH\"\n"
+                + "export TMPDIR=\"$PREFIX/tmp\"\n"
+                + "export LD_LIBRARY_PATH=\"$PREFIX/lib\"\n"
+                + "REMAP=\"$PREFIX/lib/" + TermuxPathCompat.REMAP_LIBRARY_NAME + "\"\n"
+                + "if [ -f \"$REMAP\" ]; then\n"
+                + "  export TERMUX_PREFIX_REMAP_FROM=\"" + TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH + "\"\n"
+                + "  export TERMUX_PREFIX_REMAP_TO=\"" + TermuxPathCompat.getPhysicalAppDataDir() + "\"\n"
+                + "  export LD_PRELOAD=\"$REMAP${LD_PRELOAD:+:$LD_PRELOAD}\"\n"
+                + "fi\n"
+                + "cd \"$HOME\" 2>/dev/null || true\n"
+                + "exec \"$PREFIX/bin/bash\" --noprofile --rcfile \"" + rc.getAbsolutePath() + "\"\n";
+            writeTextFile(login, loginBody);
+            Os.chmod(login.getAbsolutePath(), 0700);
+            Logger.logInfo(LOG_TAG, "Installed work-profile login glue under " + prefix);
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to install work-profile login glue: " + e.getMessage());
+        }
+    }
+
+    private static void copyFile(File src, File dst) throws java.io.IOException {
+        try (java.io.FileInputStream in = new java.io.FileInputStream(src);
+             FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0)
+                out.write(buf, 0, n);
+        }
+    }
+
+    private static void writeTextFile(File file, String body) throws java.io.IOException {
+        File parent = file.getParentFile();
+        if (parent != null)
+            parent.mkdirs();
+        try (FileOutputStream out = new FileOutputStream(file, false)) {
+            out.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+    }
+
+    /**
+     * Bootstrap scripts (login, second-stage, profile) hardcode
+     * {@code /data/data/com.termux}. Kernel shebang lookup and toybox
+     * {@code chmod}/{@code mkdir} ignore LD_PRELOAD, so rewrite text files
+     * to the physical app data dir.
+     */
+    private static void rewriteHardcodedPrefixUnder(File dir) {
+        if (dir == null || !dir.isDirectory())
+            return;
+        String from = TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH;
+        String to = TermuxPathCompat.getPhysicalAppDataDir();
+        if (from.equals(to))
+            return;
+        File[] children = dir.listFiles();
+        if (children == null)
+            return;
+        for (File child : children) {
+            if (child.isDirectory()) {
+                rewriteHardcodedPrefixUnder(child);
+                continue;
+            }
+            if (!child.isFile() || child.length() < from.length() || child.length() > 4 * 1024 * 1024)
+                continue;
+            try {
+                byte[] data = readAllBytesCompat(child);
+                if (data.length >= 4 && data[0] == 0x7F && data[1] == 'E' && data[2] == 'L' && data[3] == 'F')
+                    continue;
+                boolean hasNul = false;
+                for (byte b : data) {
+                    if (b == 0) {
+                        hasNul = true;
+                        break;
+                    }
+                }
+                if (hasNul)
+                    continue;
+                String text = new String(data, java.nio.charset.StandardCharsets.ISO_8859_1);
+                if (!text.contains(from))
+                    continue;
+                String rewritten = text.replace(from, to);
+                try (FileOutputStream fos = new FileOutputStream(child, false)) {
+                    fos.write(rewritten.getBytes(java.nio.charset.StandardCharsets.ISO_8859_1));
+                }
+            } catch (Exception ignored) {
+                // Best-effort; setupShellCommandArguments also remaps shebangs at exec time.
+            }
+        }
+    }
+
+    private static byte[] readAllBytesCompat(File file) throws java.io.IOException {
+        long len = file.length();
+        if (len > Integer.MAX_VALUE)
+            throw new java.io.IOException("file too large");
+        byte[] data = new byte[(int) len];
+        try (java.io.FileInputStream in = new java.io.FileInputStream(file)) {
+            int off = 0;
+            while (off < data.length) {
+                int n = in.read(data, off, data.length - off);
+                if (n < 0)
+                    break;
+                off += n;
+            }
+            if (off != data.length) {
+                byte[] trimmed = new byte[off];
+                System.arraycopy(data, 0, trimmed, 0, off);
+                return trimmed;
+            }
+            return data;
+        }
     }
 
     private static Error ensureDirectoryExists(File directory) {
