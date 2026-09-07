@@ -110,6 +110,7 @@ final class TermuxInstaller {
                 if (TermuxPathCompat.needsRemap()) {
                     Logger.logInfo(LOG_TAG, "Rewriting hardcoded bootstrap prefix under existing prefix dir.");
                     rewriteHardcodedPrefixUnder(prefixDir);
+                    installWorkProfileGlue(activity, prefixDir);
                 }
                 whenDone.run();
                 return;
@@ -379,6 +380,78 @@ final class TermuxInstaller {
                 }
             }
         }.start();
+    }
+
+    /**
+     * Copy the remap library into $PREFIX/lib and replace {@code bin/login} so bash is not
+     * started as a login shell (compiled SYSCONFDIR is {@code /data/data/com.termux/files/usr/etc}).
+     */
+    private static void installWorkProfileGlue(Context context, File prefixDir) {
+        if (!TermuxPathCompat.needsRemap() || prefixDir == null)
+            return;
+        try {
+            File libDir = new File(prefixDir, "lib");
+            libDir.mkdirs();
+            File src = new File(context.getApplicationInfo().nativeLibraryDir, TermuxPathCompat.REMAP_LIBRARY_NAME);
+            File dst = new File(libDir, TermuxPathCompat.REMAP_LIBRARY_NAME);
+            if (src.isFile()) {
+                copyFile(src, dst);
+                Os.chmod(dst.getAbsolutePath(), 0755);
+            }
+
+            File etcTermux = new File(prefixDir, "etc/termux");
+            etcTermux.mkdirs();
+            File rc = new File(etcTermux, "work-rc.sh");
+            String prefix = prefixDir.getAbsolutePath();
+            String home = TermuxPathCompat.getPhysicalFilesDir() + "/home";
+            String rcBody = "if [ -f \"" + prefix + "/etc/profile\" ]; then . \"" + prefix + "/etc/profile\"; fi\n"
+                + "if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi\n";
+            writeTextFile(rc, rcBody);
+            Os.chmod(rc.getAbsolutePath(), 0700);
+
+            File login = new File(prefixDir, "bin/login");
+            if (login.exists())
+                login.delete();
+            String loginBody = "#!/system/bin/sh\n"
+                + "PREFIX=\"" + prefix + "\"\n"
+                + "HOME=\"" + home + "\"\n"
+                + "export PREFIX HOME\n"
+                + "export PATH=\"$PREFIX/bin:$PATH\"\n"
+                + "export TMPDIR=\"$PREFIX/tmp\"\n"
+                + "export LD_LIBRARY_PATH=\"$PREFIX/lib\"\n"
+                + "REMAP=\"$PREFIX/lib/" + TermuxPathCompat.REMAP_LIBRARY_NAME + "\"\n"
+                + "if [ -f \"$REMAP\" ]; then\n"
+                + "  export TERMUX_PREFIX_REMAP_FROM=\"" + TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH + "\"\n"
+                + "  export TERMUX_PREFIX_REMAP_TO=\"" + TermuxPathCompat.getPhysicalAppDataDir() + "\"\n"
+                + "  export LD_PRELOAD=\"$REMAP${LD_PRELOAD:+:$LD_PRELOAD}\"\n"
+                + "fi\n"
+                + "cd \"$HOME\" 2>/dev/null || true\n"
+                + "exec \"$PREFIX/bin/bash\" --noprofile --rcfile \"" + rc.getAbsolutePath() + "\"\n";
+            writeTextFile(login, loginBody);
+            Os.chmod(login.getAbsolutePath(), 0700);
+            Logger.logInfo(LOG_TAG, "Installed work-profile login glue under " + prefix);
+        } catch (Exception e) {
+            Logger.logError(LOG_TAG, "Failed to install work-profile login glue: " + e.getMessage());
+        }
+    }
+
+    private static void copyFile(File src, File dst) throws java.io.IOException {
+        try (java.io.FileInputStream in = new java.io.FileInputStream(src);
+             FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = in.read(buf)) > 0)
+                out.write(buf, 0, n);
+        }
+    }
+
+    private static void writeTextFile(File file, String body) throws java.io.IOException {
+        File parent = file.getParentFile();
+        if (parent != null)
+            parent.mkdirs();
+        try (FileOutputStream out = new FileOutputStream(file, false)) {
+            out.write(body.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
     }
 
     /**

@@ -98,6 +98,9 @@ android {
             // Keep minify off: Termux uses reflection (BuildConfig, plugin APIs) that R8 strips.
             minifyEnabled false
             shrinkResources false
+            // LD_PRELOAD of the prefix remap is ignored by bionic unless the APK is debuggable
+            // (same as official GitHub Termux builds).
+            debuggable true
             signingConfig signingConfigs.release
         }
 

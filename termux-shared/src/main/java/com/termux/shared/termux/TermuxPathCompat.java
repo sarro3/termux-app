@@ -116,14 +116,18 @@ public final class TermuxPathCompat {
 
     /** Put remap environment variables used by libtermux-prefix-remap.so into {@code environment}. */
     public static void putRemapEnvironment(@NonNull java.util.Map<String, String> environment) {
-        if (!sNeedsRemap || sRemapLibraryPath == null)
+        if (!sNeedsRemap)
+            return;
+        File inPrefix = new File(sPhysicalFilesDir + "/usr/lib/" + REMAP_LIBRARY_NAME);
+        String lib = inPrefix.isFile() ? inPrefix.getAbsolutePath() : sRemapLibraryPath;
+        if (lib == null)
             return;
         environment.put(ENV_REMAP_FROM, TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH);
         environment.put(ENV_REMAP_TO, sPhysicalAppDataDir);
         String existing = environment.get(ENV_LD_PRELOAD);
         if (existing == null || existing.isEmpty())
-            environment.put(ENV_LD_PRELOAD, sRemapLibraryPath);
+            environment.put(ENV_LD_PRELOAD, lib);
         else if (!existing.contains(REMAP_LIBRARY_NAME))
-            environment.put(ENV_LD_PRELOAD, sRemapLibraryPath + ":" + existing);
+            environment.put(ENV_LD_PRELOAD, lib + ":" + existing);
     }
 }
