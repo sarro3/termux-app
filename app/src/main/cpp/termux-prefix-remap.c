@@ -110,6 +110,13 @@ int fstatat(int dirfd, const char *pathname, struct stat *statbuf, int flags) {
     return (int) syscall(STATAT_NR, dirfd, remap_path(pathname, buf, sizeof(buf)), statbuf, flags);
 }
 
+#ifdef SYS_statx
+int statx(int dirfd, const char *pathname, int flags, unsigned int mask, void *statxbuf) {
+    char buf[PATH_MAX];
+    return (int) syscall(SYS_statx, dirfd, remap_path(pathname, buf, sizeof(buf)), flags, mask, statxbuf);
+}
+#endif
+
 int stat(const char *pathname, struct stat *statbuf) {
     return fstatat(AT_FDCWD, pathname, statbuf, 0);
 }
