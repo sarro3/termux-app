@@ -216,6 +216,7 @@ final class TermuxInstaller {
                     }
 
                     rewriteHardcodedPrefixUnder(stagingPrefixDir);
+                    installWorkProfileGlue(activity, stagingPrefixDir);
 
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
 
@@ -404,7 +405,17 @@ final class TermuxInstaller {
             File rc = new File(etcTermux, "work-rc.sh");
             String prefix = prefixDir.getAbsolutePath();
             String home = TermuxPathCompat.getPhysicalFilesDir() + "/home";
-            String rcBody = "if [ -f \"" + prefix + "/etc/profile\" ]; then . \"" + prefix + "/etc/profile\"; fi\n"
+            String remapSo = prefix + "/lib/" + TermuxPathCompat.REMAP_LIBRARY_NAME;
+            String rcBody = "export PREFIX=\"" + prefix + "\"\n"
+                + "export HOME=\"" + home + "\"\n"
+                + "export PATH=\"$PREFIX/bin:$PATH\"\n"
+                + "export TMPDIR=\"$PREFIX/tmp\"\n"
+                + "export LD_LIBRARY_PATH=\"$PREFIX/lib\"\n"
+                + "export TERMUX_PREFIX_REMAP_FROM=\"" + TermuxConstants.TERMUX_BOOTSTRAP_APP_DATA_DIR_PATH + "\"\n"
+                + "export TERMUX_PREFIX_REMAP_TO=\"" + TermuxPathCompat.getPhysicalAppDataDir() + "\"\n"
+                + "if [ -f \"" + remapSo + "\" ]; then export LD_PRELOAD=\"" + remapSo + "${LD_PRELOAD:+:$LD_PRELOAD}\"; fi\n"
+                + "if [ -f \"$PREFIX/etc/profile\" ]; then . \"$PREFIX/etc/profile\"; fi\n"
+                + "if [ -f \"" + remapSo + "\" ]; then export LD_PRELOAD=\"" + remapSo + "${LD_PRELOAD:+:$LD_PRELOAD}\"; fi\n"
                 + "if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi\n";
             writeTextFile(rc, rcBody);
             Os.chmod(rc.getAbsolutePath(), 0700);
