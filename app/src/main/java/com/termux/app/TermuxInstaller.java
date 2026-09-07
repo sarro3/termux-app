@@ -107,6 +107,10 @@ final class TermuxInstaller {
             if (TermuxFileUtils.isTermuxPrefixDirectoryEmpty()) {
                 Logger.logInfo(LOG_TAG, "The termux prefix directory \"" + prefixDirPath + "\" exists but is empty or only contains specific unimportant files.");
             } else {
+                if (TermuxPathCompat.needsRemap()) {
+                    Logger.logInfo(LOG_TAG, "Rewriting hardcoded bootstrap prefix under existing prefix dir.");
+                    rewriteHardcodedPrefixUnder(prefixDir);
+                }
                 whenDone.run();
                 return;
             }
@@ -167,7 +171,7 @@ final class TermuxInstaller {
                                     String[] parts = line.split("←");
                                     if (parts.length != 2)
                                         throw new RuntimeException("Malformed symlink line: " + line);
-                                    String oldPath = parts[0];
+                                    String oldPath = TermuxPathCompat.toPhysical(parts[0]);
                                     String newPath = stagingPrefixDirPath + "/" + parts[1];
                                     symlinks.add(Pair.create(oldPath, newPath));
 
@@ -210,13 +214,17 @@ final class TermuxInstaller {
                         Os.symlink(symlink.first, symlink.second);
                     }
 
-                    rewriteShebangsUnder(stagingPrefixDir);
+                    rewriteHardcodedPrefixUnder(stagingPrefixDir);
 
                     Logger.logInfo(LOG_TAG, "Moving termux prefix staging to prefix directory.");
 
                     if (!stagingPrefixDir.renameTo(prefixDir)) {
                         throw new RuntimeException("Moving termux prefix staging to prefix directory failed");
                     }
+
+                    Error homeError = FileUtils.createDirectoryFile(TermuxPathCompat.toPhysical(TermuxConstants.TERMUX_HOME_DIR_PATH));
+                    if (homeError != null)
+                        Logger.logError(LOG_TAG, homeError.toString());
 
                     Logger.logInfo(LOG_TAG, "Bootstrap packages installed successfully.");
 
