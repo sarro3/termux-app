@@ -39,10 +39,29 @@ static void init_remap(void) {
     g_enabled = 1;
 }
 
+/* True if path is a strict ancestor of g_from under /data/data (not / or /data).
+ * dpkg stats/mkdirs /data/data before /data/data/com.termux; work profiles
+ * cannot access /data/data. */
+static int is_from_ancestor(const char *path, size_t path_len) {
+    if (path_len < 6 || path_len >= g_from_len)
+        return 0;
+    if (strncmp(g_from, path, path_len) != 0)
+        return 0;
+    if (g_from[path_len] != '/')
+        return 0;
+    return 1;
+}
+
 static const char *remap_path(const char *path, char *buf, size_t buf_size) {
     if (!g_enabled || path == NULL || path[0] != '/')
         return path;
     size_t path_len = strlen(path);
+    if (is_from_ancestor(path, path_len)) {
+        if (g_to_len + 1 > buf_size)
+            return path;
+        memcpy(buf, g_to, g_to_len + 1);
+        return buf;
+    }
     if (path_len < g_from_len)
         return path;
     if (strncmp(path, g_from, g_from_len) != 0)
@@ -126,11 +145,21 @@ int lstat(const char *pathname, struct stat *statbuf) {
 }
 
 int mkdir(const char *pathname, mode_t mode) {
+    if (g_enabled && pathname != NULL && pathname[0] == '/') {
+        size_t n = strlen(pathname);
+        if (is_from_ancestor(pathname, n))
+            return 0;
+    }
     char buf[PATH_MAX];
     return (int) syscall(SYS_mkdirat, AT_FDCWD, remap_path(pathname, buf, sizeof(buf)), mode);
 }
 
 int mkdirat(int dirfd, const char *pathname, mode_t mode) {
+    if (g_enabled && pathname != NULL && pathname[0] == '/') {
+        size_t n = strlen(pathname);
+        if (is_from_ancestor(pathname, n))
+            return 0;
+    }
     char buf[PATH_MAX];
     return (int) syscall(SYS_mkdirat, dirfd, remap_path(pathname, buf, sizeof(buf)), mode);
 }

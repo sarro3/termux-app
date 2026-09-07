@@ -103,7 +103,9 @@ public class TermuxAmSocketServer {
         stop();
 
         AmSocketServerRunConfig amSocketServerRunConfig = new AmSocketServerRunConfig(TITLE,
-            TermuxConstants.TERMUX_APP.TERMUX_AM_SOCKET_FILE_PATH, new TermuxAmSocketServerClient());
+            com.termux.shared.termux.TermuxPathCompat.toPhysical(
+                TermuxConstants.TERMUX_APP.TERMUX_AM_SOCKET_FILE_PATH),
+            new TermuxAmSocketServerClient());
 
         termuxAmSocketServer = AmSocketServer.start(context, amSocketServerRunConfig);
     }
